@@ -60,7 +60,7 @@ MAX_TARGET_AREA = 0.45   # bigger than this is a container, not a target
 class Config:
     title: str = "Untitled procedure"
     description: str = ""
-    outdir: Path = Path("guides")
+    outdir: Path | None = Path("guides")
     pad: int = DEFAULT_PAD
     full_frames: bool = False
     dim: bool = False
@@ -692,6 +692,19 @@ figure img{display:block;width:100%;height:auto;border:1px solid var(--rule);
   border-radius:6px}
 .note{margin-top:12px;border-left:3px solid var(--signal);background:#fff;
   padding:12px 16px;font-size:15px}
+.detail{font-size:15px;color:var(--ink-2);margin:6px 0 0;max-width:62ch}
+.prereqs{margin:32px 0 0;padding:20px 24px;background:#fff;border:1px solid var(--rule);
+  border-radius:6px}
+.prereqs h2{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--signal);margin:0 0 10px;font-weight:600}
+.prereqs ul{margin:0;padding-left:20px}
+.prereqs li{margin:0 0 5px;font-size:15px;color:var(--ink-2)}
+.phase{position:relative;margin:0 0 24px;padding-left:64px}
+.phase:not(:first-child){margin-top:36px}
+.phase h2{font-family:var(--display);font-size:20px;font-weight:650;margin:0;
+  letter-spacing:-.01em}
+.phase span{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--signal);display:block;margin-bottom:4px}
 footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--rule);
   font-family:var(--mono);font-size:11px;color:var(--ink-3);line-height:1.7}
 @media (max-width:640px){
@@ -719,6 +732,7 @@ PAGE = """<!doctype html>
   {lede}
   <div class="meta"><span>{count} steps</span><span>Captured {date}</span></div>
 </header>
+{prereqs}
 <div class="steps">
 {steps}
 </div>
@@ -752,17 +766,37 @@ def render_caption(text: str) -> str:
     return "".join(out)
 
 
-def build_html(session: Path, title: str, description: str, steps: list) -> Path:
+def build_html(session: Path, payload: dict) -> Path:
+    """Render a session to a single self-contained HTML file.
+
+    Recognised keys: title, description, prerequisites (list of strings), and
+    steps. Each step may carry `phase` (a heading introducing the steps that
+    follow), `detail` (one clarifying sentence under the instruction), `caption`,
+    `note` and `hidden`. Phases, when present, replace the automatic
+    window-title context lines - a human-written grouping beats a guessed one.
+    """
     shots = session / "shots"
-    blocks, seen_window = [], None
+    title = payload.get("title", "Untitled procedure")
+    description = payload.get("description", "") or ""
+    prerequisites = [p for p in payload.get("prerequisites", []) if str(p).strip()]
+    steps = payload.get("steps", [])
+
     visible = [s for s in steps if not s.get("hidden")]
+    use_phases = any(s.get("phase") for s in visible)
+    blocks, seen_phase, seen_window = [], None, None
 
     for n, s in enumerate(visible, 1):
-        window = s.get("window", "")
-        # The context line earns its place only when the location changes.
-        if window and window != seen_window:
-            blocks.append(f'<div class="context">{esc(window)}</div>')
-            seen_window = window
+        if use_phases:
+            phase = s.get("phase", "")
+            if phase and phase != seen_phase:
+                seen_phase = phase
+                blocks.append(f'<div class="phase"><span>Stage</span>'
+                              f'<h2>{esc(phase)}</h2></div>')
+        else:
+            window = s.get("window", "")
+            if window and window != seen_window:
+                seen_window = window
+                blocks.append(f'<div class="context">{esc(window)}</div>')
 
         img_html = ""
         path = shots / s.get("image", "")
@@ -770,18 +804,27 @@ def build_html(session: Path, title: str, description: str, steps: list) -> Path
             data = base64.b64encode(path.read_bytes()).decode()
             img_html = (f'<figure><img alt="Step {n}" '
                         f'src="data:image/png;base64,{data}"></figure>')
-        note = s.get("note", "") if s.get("action") == "note" else ""
-        note_html = f'<div class="note">{render_caption(note)}</div>' if note else ""
+
         caption = s.get("caption", "").strip()
         say = f'<p class="say">{render_caption(caption)}</p>' if caption else ""
+        detail = s.get("detail", "").strip()
+        detail_html = (f'<p class="detail">{render_caption(detail)}</p>'
+                       if detail else "")
+        note = s.get("note", "") if s.get("action") == "note" else ""
+        note_html = f'<div class="note">{render_caption(note)}</div>' if note else ""
         blocks.append(
             f'<section class="step"><div class="chip">{n}</div>'
-            f'{say}{img_html}{note_html}</section>')
+            f'{say}{detail_html}{img_html}{note_html}</section>')
 
     lede = f'<p class="lede">{esc(description)}</p>' if description.strip() else ""
+    prereqs = ""
+    if prerequisites:
+        items = "".join(f"<li>{render_caption(str(p))}</li>" for p in prerequisites)
+        prereqs = f'<div class="prereqs"><h2>Before you start</h2><ul>{items}</ul></div>'
+
     out = session / "guide.html"
     out.write_text(PAGE.format(
-        title=esc(title), css=CSS, lede=lede, count=len(visible),
+        title=esc(title), css=CSS, lede=lede, prereqs=prereqs, count=len(visible),
         date=datetime.now().strftime("%d %b %Y"), steps="\n".join(blocks),
     ), encoding="utf-8")
     return out
@@ -810,7 +853,7 @@ def strip_marks(text: str) -> str:
 # GUI
 # --------------------------------------------------------------------------
 
-def run_gui():
+def run_gui(prefill: Config | None = None):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
 
@@ -878,7 +921,7 @@ def run_gui():
 
         tk.Label(win, text="Title", bg=BG, fg=FG,
                  font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=28)
-        title_var = tk.StringVar()
+        title_var = tk.StringVar(value=(prefill.title if prefill else ""))
         entry = tk.Entry(win, textvariable=title_var, font=("Segoe UI", 11),
                          relief="solid", bd=1)
         entry.pack(fill="x", padx=28, pady=(4, 16), ipady=5)
@@ -890,6 +933,8 @@ def run_gui():
         desc = tk.Text(win, height=5, font=("Segoe UI", 10), relief="solid", bd=1,
                        wrap="word")
         desc.pack(fill="x", padx=28, pady=(6, 16))
+        if prefill and prefill.description:
+            desc.insert("1.0", prefill.description)
 
         typing = tk.BooleanVar(value=True)
         mask = tk.BooleanVar(value=False)
@@ -903,7 +948,8 @@ def run_gui():
                            activebackground=BG, highlightthickness=0,
                            font=("Segoe UI", 10), anchor="w").pack(fill="x")
 
-        outdir = tk.StringVar(value=str(Path.home() / "Documents" / "scribeling"))
+        outdir = tk.StringVar(value=str(prefill.outdir if prefill and prefill.outdir
+                                        else Path.home() / "Documents" / "scribeling"))
         row = tk.Frame(win, bg=BG)
         row.pack(fill="x", padx=28, pady=(14, 0))
         tk.Label(row, textvariable=outdir, bg=BG, fg=MUTED, font=("Consolas", 8),
@@ -1081,8 +1127,8 @@ def run_gui():
                 s["caption"] = var.get()
                 s["hidden"] = not keep.get()
             ordered = [s for s, _, _ in rows]
-            save_session(session, cfg, ordered)
-            out = build_html(session, cfg.title, cfg.description, ordered)
+            payload = save_session(session, cfg, ordered)
+            out = build_html(session, payload)
             canvas.unbind_all("<MouseWheel>")
             win.destroy()
             done(out)
@@ -1141,16 +1187,22 @@ def cmd_record(args):
         time.sleep(0.2)
     steps = rec.shutdown()
     payload = save_session(session, cfg, steps)
-    out = build_html(session, cfg.title, cfg.description, payload["steps"])
+    out = build_html(session, payload)
     print(f"\n{len(steps)} steps -> {out}")
 
 
 def cmd_rebuild(args):
     session = Path(args.session)
     payload = json.loads((session / "steps.json").read_text(encoding="utf-8"))
-    out = build_html(session, args.title or payload.get("title", "Untitled"),
-                     payload.get("description", ""), payload["steps"])
+    if args.title:
+        payload["title"] = args.title
+    out = build_html(session, payload)
     print(f"Rebuilt -> {out}")
+
+
+def cmd_gui(args):
+    run_gui(Config(title=args.title or "", description=args.description or "",
+                   outdir=Path(args.outdir) if args.outdir else None))
 
 
 def main():
@@ -1172,6 +1224,12 @@ def main():
     r.add_argument("--mask-typed", action="store_true")
     r.add_argument("--no-typing", action="store_true")
     r.set_defaults(func=cmd_record)
+
+    g = sub.add_parser("gui", help="open the GUI with fields prefilled")
+    g.add_argument("--title", default="")
+    g.add_argument("--description", default="")
+    g.add_argument("--outdir", default="")
+    g.set_defaults(func=cmd_gui)
 
     b = sub.add_parser("rebuild")
     b.add_argument("session")

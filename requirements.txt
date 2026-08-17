@@ -1,0 +1,4 @@
+pynput>=1.7.6
+mss>=9.0.1
+pillow>=10.0.0
+uiautomation>=2.0.20

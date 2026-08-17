@@ -1,0 +1,64 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      # --collect-all comtypes/uiautomation is required: uiautomation generates
+      # COM interface wrappers at runtime, which PyInstaller cannot find by
+      # static analysis.
+      - name: Build Scribeling.exe
+        run: >
+          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          --name Scribeling
+          --collect-all uiautomation
+          --collect-all comtypes
+          --collect-submodules pynput
+          --exclude-module matplotlib
+          --exclude-module numpy
+          --uac-admin
+          skill/scribeling-guides/scripts/scribeling.py
+
+      - name: Package the skill
+        run: powershell -ExecutionPolicy Bypass -File tools/pack-skill.ps1
+
+      - name: Verify artifacts exist
+        run: |
+          if (-not (Test-Path dist/Scribeling.exe)) { throw "Scribeling.exe missing" }
+          if (-not (Test-Path dist/scribeling-guides.skill)) { throw "skill package missing" }
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scribeling
+          path: |
+            dist/Scribeling.exe
+            dist/scribeling-guides.skill
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Scribeling.exe
+            dist/scribeling-guides.skill
+          body: |
+            The exe is unsigned, so SmartScreen will warn on first run.
+            See the README for the elevation notes and antivirus caveats.

@@ -1,0 +1,94 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Create an Autopilot deployment profile</title>
+<style>
+:root{
+  --ink:#141821; --ink-2:#454d5d; --ink-3:#7b8496;
+  --paper:#fbfbfc; --rule:#e2e5eb; --signal:#d6006e;
+  --display:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+  --body:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+  font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:940px;margin:0 auto;padding:56px 28px 96px}
+header{border-bottom:2px solid var(--ink);padding-bottom:24px}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--signal)}
+h1{font-family:var(--display);font-weight:650;font-size:clamp(28px,5vw,44px);
+  line-height:1.08;letter-spacing:-.02em;margin:10px 0 0}
+.lede{font-size:18px;color:var(--ink-2);max-width:64ch;margin:16px 0 0}
+.meta{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin-top:20px;
+  display:flex;flex-wrap:wrap;gap:18px}
+.steps{position:relative;margin-top:44px}
+.steps::before{content:"";position:absolute;left:17.5px;top:6px;bottom:30px;
+  width:1px;background:var(--rule)}
+.context{position:relative;margin:0 0 20px;padding-left:64px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3)}
+.context::before{content:"";position:absolute;left:0;top:8px;width:36px;
+  height:1px;background:var(--rule)}
+.context:not(:first-child){margin-top:8px}
+.step{position:relative;padding-left:64px;margin-bottom:40px}
+.chip{position:absolute;left:0;top:-2px;width:36px;height:36px;border-radius:5px;
+  border:3px solid var(--signal);background:var(--paper);color:var(--signal);
+  font-family:var(--mono);font-size:14px;font-weight:600;
+  display:flex;align-items:center;justify-content:center}
+.say{font-size:18px;line-height:1.45;margin:0;max-width:62ch}
+.say strong{font-weight:650}
+.say code{font-family:var(--mono);font-size:.86em;background:#eef0f4;
+  border:1px solid var(--rule);border-radius:4px;padding:1px 5px}
+figure{margin:14px 0 0}
+figure img{display:block;width:100%;height:auto;border:1px solid var(--rule);
+  border-radius:6px}
+.note{margin-top:12px;border-left:3px solid var(--signal);background:#fff;
+  padding:12px 16px;font-size:15px}
+.detail{font-size:15px;color:var(--ink-2);margin:6px 0 0;max-width:62ch}
+.prereqs{margin:32px 0 0;padding:20px 24px;background:#fff;border:1px solid var(--rule);
+  border-radius:6px}
+.prereqs h2{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--signal);margin:0 0 10px;font-weight:600}
+.prereqs ul{margin:0;padding-left:20px}
+.prereqs li{margin:0 0 5px;font-size:15px;color:var(--ink-2)}
+.phase{position:relative;margin:0 0 24px;padding-left:64px}
+.phase:not(:first-child){margin-top:36px}
+.phase h2{font-family:var(--display);font-size:20px;font-weight:650;margin:0;
+  letter-spacing:-.01em}
+.phase span{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--signal);display:block;margin-bottom:4px}
+footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--rule);
+  font-family:var(--mono);font-size:11px;color:var(--ink-3);line-height:1.7}
+@media (max-width:640px){
+  .wrap{padding:32px 16px 64px}
+  .step,.context{padding-left:0}
+  .steps::before,.context::before{display:none}
+  .chip{position:static;margin-bottom:10px}
+}
+@media print{
+  body{background:#fff}
+  .wrap{max-width:none;padding:0}
+  .step{break-inside:avoid;page-break-inside:avoid}
+}
+</style>
+<div class="wrap">
+<header>
+  <div class="eyebrow">Step-by-step procedure</div>
+  <h1>Create an Autopilot deployment profile</h1>
+  <p class="lede">For the deskside team. Use this when staging a new Windows PC for zero-touch enrolment.</p>
+  <div class="meta"><span>5 steps</span><span>Captured 17 Aug 2026</span></div>
+</header>
+<div class="prereqs"><h2>Before you start</h2><ul><li>Intune Administrator or Windows 365 Administrator role</li><li>Devices already registered as Autopilot devices</li><li>An Entra group to assign the profile to</li></ul></div>
+<div class="steps">
+<div class="phase"><span>Stage</span><h2>Create the profile</h2></div>
+<section class="step"><div class="chip">1</div><p class="say">Open <strong>Deployment profiles</strong> under Windows enrollment</p><figure><img alt="Step 1" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA4QAAAHmBAMAAADZw11wAAAAElBMVEX////z8/fc3+b0udcAWp7WAG7QspmUAAADhUlEQVR42u3dwU3DMBiGYQd6h4zAArQSi2RS6CKR3A5AswEThHDgjtwD9LN43gXyy09tOYe2w1jUd3eWAKEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUP21u9WDfaOqe8LPxeI7SIUQoRAKoRAiFEIhFEKEQiiECC0BQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVB/2S5zrPtD4lSzXdi5YHlB2LlgqGEkYapg5mSuM26kv3GO5i5X4mihN9JynvJmes084IfxRg9+WH66NAxPgWu1XUpZq4O0rVPkx71GrlXoQTqVjzzBx2lxnbni0DKSlwovFUIohEKIUAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUAivaTBSa6E/HXScxsSpDnZhc/vEobZIwUjCWsp2DJzr7Xs2B2lbz+95M2VuwshduObe/laE+ieENXa5KsLG4yrVcLYLOzfM/LeY0BvpOhe5ziAUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhECK0BAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUAiFEKE67wuO8yhQS12zzAAAAABJRU5ErkJggg=="></figure></section>
+<section class="step"><div class="chip">2</div><p class="say">Select <strong>Create profile</strong>, then choose Windows PC</p><figure><img alt="Step 2" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA4QAAAHmBAMAAADZw11wAAAAElBMVEX////z8/fc3+b0udcAWp7WAG7QspmUAAADi0lEQVR42u3dTU7CQBiA4W+EA8gRygG0CRfpSZWLkFQPoN5ALtDUhUtZlExM5ud5lw0kH30yw3QDKVRRw/XvtQe3pfYQIhRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUAiFUAgRCqEQCiFCIRRChG4BQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFsrX1vH3g3ljjVxSqsXDBOCCsXzDLsjHBscDLHGSfSuvbRFkfr7kQa71N5M73kbPCpK75TRBoKnGv9jFjmDS8crr4L463EodKc8ebuNtIpvssTfJy+HGfu2LRaG8lDhYcKIRRChEIohEKIUAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohP9bam2k7n466DwdSpxqtAo391ziUGuGYGeEc8R6LnCu19/ZbKTbevoob6acRdjZKlxaHM1DhYeK6r4Mm5usM8KlVMOLVVi5Yc6/xaRQRfltbscZIRRCIUQohEIohAiFUAiFEKEQCqEQIhRCIRRChEIohEKIUKW0P7oHFbXeuJYO7ouNVAiFEKEQCqEQIhRCIRRChEIohEKIUAiFUAgRCqEQCiFCIRRCIUQohEIohAiFUAiFEKEQCqHu6AcK4iflmeJuqQAAAABJRU5ErkJggg=="></figure></section>
+<section class="step"><div class="chip">3</div><p class="say">Enter a profile name</p><p class="detail">The convention here is <code>Corp-Autopilot-&lt;model&gt;</code>.</p><figure><img alt="Step 3" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA4QAAAHgAgMAAACA2kvNAAAADFBMVEX////0udcAWp7WAG6YeSS8AAABXElEQVR42u3avU0DQRCA0fUPIZID2xEBJdABV4IjV0AfFAQidHwlUAQZBBaEWD43wFgI5LEY3gtvgtV3u3cX2K0BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOcwylhk0QWDh4TFxxl3MQpsqyKF83ByUaSw+9HoLxWeV0LhsZfZ7PTLTzNu4/7x6+vvdzX2cNqugsllxg1OeQ6fo/PbtyKntA++7Iv+vsgeDsH1bZF3af2vhUKFChUqVKhQoUKFChUqVKhQoUKFChUqVKhQoUKFCr8v+jfGLGPxlF+5uz4YLG+L7OFNcH3oapzSXXsJJh9tV+SUjte13zTDkdnW1+L3JglrvF6Ho02NPXwLJ59F9jDexKcGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/VARdxGms37EC7AAAAAElFTkSuQmCC"></figure></section>
+<div class="phase"><span>Stage</span><h2>Configure the out-of-box experience</h2></div>
+<section class="step"><div class="chip">4</div><p class="say">Set the privacy settings prompt to <strong>Yes</strong></p><p class="detail">Hides the OOBE privacy screens so the user reaches the desktop without choices to make.</p><figure><img alt="Step 4" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAA4QAAAHWBAMAAADduVrdAAAAElBMVEX////z8/fc3+b0udcAWp7WAG7QspmUAAADU0lEQVR42u3cQWrCQBSA4ZfGLAvJokfoXvD+RyjkBN10KUjApQS7KLjKFDRp8Q3fv5wHgvmYTAJiM8TWNafQP/biEiAUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIT6m3ZVfqtDYX0e7cLcgtHuEeYWrNOwQsL24SFCIdym/YqpJ9JnaX5fXL582YVZjsK35VHX13gYVnkWzn1h8OrVPkldXKel9aFzI03TdMcqQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIS3+jtWs1flT4Ev0QyFgV2Yo3YqDM4IMzRHxLGwO6efsRtpgm346XEmc+OKKUIh3OowfGyI8Fn6+EVwRJjbsMp/fyq8A6/6yJPzyS4UQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIhRChEAqhECIUQiEUQoRCKIRCiFAIhVAIEQqhEAohQiEUQiFEKIRCKIQIhVAIEboECIVQCBEKoRAKIUIhFEIhRCiEQiiECIVQCIUQoRAKoRAiFEIhFEKEQiiEQohQCIVQCBEKoRAKIUIhFEIhRCiEQiiECIVQCIUQoRAKoRAiFEIhFEKEQiiEQohQCIVQCBEKoRAKIUIhFEIhRCiEQiiECIVQCIUQoRAKoRAiFEIhFEKEQiiEQohQCIVQCBEKoRAKIUIhFEIhRCiEQiiECIVQCIUQoRAKoRAiFEIhVMQ3lDwjqCFjcIwAAAAASUVORK5CYII="></figure></section>
+<section class="step"><div class="chip">5</div><p class="say">Approve the <strong>User Account Control</strong> prompt</p></section>
+</div>
+<footer>Recorded with scribeling. Screenshots come from a live session &mdash;
+check them for anything that should not leave the room before you share this.</footer>
+</div>

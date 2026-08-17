@@ -1,0 +1,25 @@
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Packaged skill (produced by tools/pack-skill.ps1)
+*.skill
+
+# Recorded sessions - these contain screenshots of a live desktop and must
+# never be committed.
+guides/
+**/steps.json
+**/shots/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
