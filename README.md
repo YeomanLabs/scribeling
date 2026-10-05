@@ -93,8 +93,8 @@ attachment or a file share with no network access. It has:
   (`guide.html#step-7`).
 - **Click-to-zoom screenshots.** Click again to see the image at full size, and
   press Esc to close.
-- **A highlight box and a click ring** on each screenshot. The box shows which
-  control was clicked and the ring shows exactly where.
+- **A highlight box and a pointing hand** on each screenshot. The box shows which
+  control was clicked, and the hand (with a soft glow) shows exactly where.
 - **Light and dark themes.** The guide follows the reader's system setting, and
   the button in the corner overrides it.
 - **A byline** with the author, step count, how long the procedure took, and

@@ -54,7 +54,8 @@ MIN_CROP = (900, 420)
 MAX_WIDTH = 1400
 DEDUPE_WINDOW = 1.6      # seconds; a repeat click on one target is one step
 MAX_TARGET_AREA = 0.45   # bigger than this is a container, not a target
-RING = 18                # radius of the click-point marker, in screen pixels
+HAND = 1.7               # pointer-hand scale; 1.0 is about 27px wide
+GLOW = (255, 196, 40)    # warm halo under the click point
 
 
 @dataclass
@@ -288,6 +289,53 @@ def fit_span(lo, hi, minimum, limit):
     return max(0, lo), min(limit, hi)
 
 
+_HAND_CACHE: dict = {}
+
+
+def hand_sprite(scale: float = HAND):
+    """A white pointing hand with a dark outline, drawn rather than shipped as
+    an asset so the recorder stays one file. Returns (RGBA image, hotspot),
+    where the hotspot is the fingertip. Drawn at 4x and scaled down so the
+    edges are smooth."""
+    if scale in _HAND_CACHE:
+        return _HAND_CACHE[scale]
+    from PIL import Image, ImageDraw, ImageFilter
+
+    ss = 4 * scale
+    ox, oy = 12, 2          # fingertip sits at (0, 0) in the units below
+    W, H = int(32 * ss), int(36 * ss)
+
+    def box(x0, y0, x1, y1):
+        return [(x0 + ox) * ss, (y0 + oy) * ss, (x1 + ox) * ss, (y1 + oy) * ss]
+
+    mask = Image.new("L", (W, H), 0)
+    d = ImageDraw.Draw(mask)
+    d.rounded_rectangle(box(-3, 0, 3, 17), radius=3 * ss, fill=255)      # index
+    d.rounded_rectangle(box(2.6, 9, 7.8, 17), radius=2.6 * ss, fill=255)  # middle
+    d.rounded_rectangle(box(7.4, 10, 12.2, 18), radius=2.4 * ss, fill=255)
+    d.rounded_rectangle(box(11.8, 12, 16, 19), radius=2.1 * ss, fill=255)
+    d.rounded_rectangle(box(-6, 13, 16, 28), radius=5 * ss, fill=255)     # palm
+    d.ellipse(box(-11.5, 12.5, -3, 21), fill=255)                         # thumb
+    d.polygon([tuple(box(-9, 17, 0, 0)[:2]), tuple(box(-3, 13, 0, 0)[:2]),
+               tuple(box(-3, 24, 0, 0)[:2])], fill=255)
+    d.rounded_rectangle(box(-4, 26, 14, 31), radius=1.5 * ss, fill=255)   # cuff
+
+    edge = mask.filter(ImageFilter.MaxFilter(int(ss * 1.4) | 1))
+    sprite = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sprite.paste((24, 24, 28, 255), (0, 0), edge)
+    sprite.paste((255, 255, 255, 255), (0, 0), mask)
+    lines = ImageDraw.Draw(sprite)
+    for x, y0, y1 in ((2.8, 12, 17), (7.6, 13, 18), (12, 14.5, 19)):
+        lines.line(box(x, y0, x, y1)[:2] + box(x, y0, x, y1)[2:],
+                   fill=(150, 150, 158, 255), width=max(1, int(ss * .6)))
+    lines.line(box(-4, 26, 14, 26)[:2] + box(-4, 26, 14, 26)[2:],
+               fill=(24, 24, 28, 255), width=max(1, int(ss * .7)))
+
+    sprite = sprite.resize((W // 4, H // 4), Image.LANCZOS)
+    _HAND_CACHE[scale] = (sprite, (int(ox * scale), int(oy * scale)))
+    return _HAND_CACHE[scale]
+
+
 def annotate(img, rect, offset, cfg: Config, point=None):
     from PIL import Image, ImageDraw
 
@@ -315,13 +363,21 @@ def annotate(img, rect, offset, cfg: Config, point=None):
     draw.rounded_rectangle([box[0] - 6, box[1] - 6, box[2] + 6, box[3] + 6],
                            radius=9, outline=SIGNAL + (70,), width=6)
     draw.rounded_rectangle(box, radius=5, outline=SIGNAL + (255,), width=3)
+    img = Image.alpha_composite(img.convert("RGBA"), layer)
+
     if point:
         # Where the pointer actually landed. The box says which control; the
-        # ring says where on it, which matters for wide rows and split buttons.
-        cx, cy = point[0] - ox, point[1] - oy
-        draw.ellipse([cx - RING, cy - RING, cx + RING, cy + RING],
-                     fill=SIGNAL + (40,), outline=SIGNAL + (230,), width=3)
-    img = Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
+        # hand says where on it, which matters for wide rows and split buttons.
+        from PIL import ImageFilter
+        cx, cy = int(point[0] - ox), int(point[1] - oy)
+        glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        r = 30
+        ImageDraw.Draw(glow).ellipse([cx - r, cy - r, cx + r, cy + r],
+                                     fill=GLOW + (150,))
+        img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(14)))
+        sprite, (hx, hy) = hand_sprite()
+        img.alpha_composite(sprite, (max(0, cx - hx), max(0, cy - hy)))
+    img = img.convert("RGB")
 
     if not cfg.full_frames:
         l, r = fit_span(box[0] - cfg.pad, box[2] + cfg.pad, MIN_CROP[0], w)
