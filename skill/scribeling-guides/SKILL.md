@@ -125,6 +125,14 @@ it renders as a clickable link, and needs no screenshot.
 & (Get-Content "$env:LOCALAPPDATA\scribeling\python.txt" -Raw).Trim() <skill>/scripts/scribeling.py rebuild "<session>"
 ```
 
+If the user wants to adjust anything themselves afterwards — delete, reorder
+or merge steps, swap a screenshot — point them at the step editor rather than
+the JSON:
+
+```powershell
+& (Get-Content "$env:LOCALAPPDATA\scribeling\python.txt" -Raw).Trim() <skill>/scripts/scribeling.py edit "<session>"
+```
+
 **5. Tell the user what you changed** — how many steps you merged or dropped, the
 phases you introduced, and anything you could not resolve from the screenshots
 and want them to confirm. Then point them at `<session>/guide.html`.
