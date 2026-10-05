@@ -33,6 +33,23 @@ Use `prerequisites` for what must be true before step 1: roles and licences
 needed, access required, anything to have open or to hand. Readers who cannot
 complete step 1 should discover it before they start, not at step 1.
 
+Phases also drive the guide's contents sidebar, which lists each stage and
+tracks the reader's position as they scroll. Aim for two to five; a sidebar with
+one entry is not shown, and one with twelve is a table of contents nobody reads.
+
+Use `url` on a step to give the reader a link to click instead of an address to
+copy. A procedure that starts in a portal should open with one:
+
+```json
+{"index": 0, "action": "navigate", "phase": "Find the device",
+ "caption": "Open the Intune admin center at",
+ "url": "https://intune.microsoft.com/#home"}
+```
+
+Only `http` and `https` links are rendered as links; anything else shows as
+code. A navigate step needs no `image`. Give it an index not used by any
+recorded step.
+
 Use `detail` for one clarifying sentence under an instruction. It is the right
 home for a warning, a naming convention, or an explanation of a choice. Do not
 put a second instruction there — if the reader must act, it is a step.

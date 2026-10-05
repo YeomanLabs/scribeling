@@ -58,6 +58,8 @@ def main() -> int:
     print(f"title:        {payload.get('title', '(none)')}")
     desc = payload.get("description", "")
     print(f"description:  {desc if desc else '(none)'}")
+    print(f"author:       {payload.get('author') or '(none)'}")
+    print(f"tags:         {', '.join(payload.get('tags', [])) or '(none)'}")
     prereqs = payload.get("prerequisites", [])
     print(f"prerequisites: {len(prereqs)}")
     print(f"steps:        {len(steps)} "
@@ -73,14 +75,15 @@ def main() -> int:
         image = s.get("image", "")
         has_img = bool(image) and (shots / image).is_file()
         flag = " ok " if has_img else " -- "
-        if not has_img and s.get("action") not in ("uac", "note"):
+        if not has_img and s.get("action") not in ("uac", "note", "navigate"):
             missing_images.append(idx)
         caption = s.get("caption", "")
         if "highlighted control" in caption:
             blind.append(idx)
         mark = "H" if s.get("hidden") else " "
         windows.append(s.get("window", ""))
-        print(f"{str(idx):>3}{mark} {action} {flag} {caption[:58]}")
+        url = f" -> {s['url']}" if s.get("url") else ""
+        print(f"{str(idx):>3}{mark} {action} {flag} {(caption + url)[:58]}")
 
     print()
     print("windows seen:")
@@ -100,6 +103,10 @@ def main() -> int:
         problems.append(f"consecutive steps share a caption: {dupes}")
     if not desc.strip():
         problems.append("no description - the guide will have no lede")
+    phases = {s.get("phase") or None for s in steps if not s.get("hidden")}
+    if None in phases and len(phases) > 1:
+        problems.append("only some steps have a phase - give every step one, "
+                        "or none")
 
     print()
     if problems:

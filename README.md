@@ -66,7 +66,32 @@ sentence, group steps with `phase`, add a `prerequisites` list, set
 Scribeling.exe rebuild "C:\Users\you\Documents\scribeling\2026-08-15_143002"
 ```
 
-Captions accept `**bold**` and `` `code` ``.
+Captions accept `**bold**` and `` `code` ``. Top-level `author` and `tags` fill
+the byline and the product badges; a step with `"action": "navigate"` and a
+`url` renders as a clickable link.
+
+## What the guide looks like
+
+`guide.html` is one file with everything inline, so it works from an email
+attachment or a file share with no network access. It has:
+
+- **A stage sidebar** built from your `phase` names, with a "2 of 3" counter that
+  follows you as you scroll, and up and down buttons to jump between stages.
+- **Step cards** with numbered badges you can link to directly
+  (`guide.html#step-7`).
+- **Click-to-zoom screenshots.** Click again to see the image at full size, and
+  press Esc to close.
+- **A highlight box and a click ring** on each screenshot. The box shows which
+  control was clicked and the ring shows exactly where.
+- **Light and dark themes.** The guide follows the reader's system setting, and
+  the button in the corner overrides it.
+- **A byline** with the author, step count, how long the procedure took, and
+  the capture date. The author defaults to your Windows display name.
+- **Copy-on-click** for anything in `` `code` ``, such as a value to type or a
+  group tag.
+- **Print-friendly output**: printing drops the sidebar and keeps steps whole.
+
+See [`examples/example-guide.html`](examples/example-guide.html).
 
 ## Quick start — Claude Skill
 

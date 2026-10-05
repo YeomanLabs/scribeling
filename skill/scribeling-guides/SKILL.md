@@ -114,7 +114,10 @@ starting; it covers what to write, what to merge, what to drop, and the voice to
 use. In short: keep `index` and `image` untouched, rewrite `caption`, add `phase`
 to group steps into recognisable stages, add `detail` for a clarifying sentence,
 add a `prerequisites` list at the top level, set `"hidden": true` rather than
-deleting anything.
+deleting anything. Set top-level `author` and `tags` (product names, e.g.
+`["Microsoft", "Intune"]`) if the user gave them. When the procedure starts in a
+browser, insert a first step with `"action": "navigate"` and the page's `url`;
+it renders as a clickable link, and needs no screenshot.
 
 **4. Re-render:**
 

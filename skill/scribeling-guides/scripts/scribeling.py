@@ -54,12 +54,14 @@ MIN_CROP = (900, 420)
 MAX_WIDTH = 1400
 DEDUPE_WINDOW = 1.6      # seconds; a repeat click on one target is one step
 MAX_TARGET_AREA = 0.45   # bigger than this is a container, not a target
+RING = 18                # radius of the click-point marker, in screen pixels
 
 
 @dataclass
 class Config:
     title: str = "Untitled procedure"
     description: str = ""
+    author: str = ""
     outdir: Path | None = Path("guides")
     pad: int = DEFAULT_PAD
     full_frames: bool = False
@@ -286,7 +288,7 @@ def fit_span(lo, hi, minimum, limit):
     return max(0, lo), min(limit, hi)
 
 
-def annotate(img, rect, offset, cfg: Config, fallback_point=None):
+def annotate(img, rect, offset, cfg: Config, point=None):
     from PIL import Image, ImageDraw
 
     ox, oy = offset
@@ -294,8 +296,8 @@ def annotate(img, rect, offset, cfg: Config, fallback_point=None):
 
     if rect:
         box = [rect[0] - ox, rect[1] - oy, rect[2] - ox, rect[3] - oy]
-    elif fallback_point:
-        px, py = fallback_point[0] - ox, fallback_point[1] - oy
+    elif point:
+        px, py = point[0] - ox, point[1] - oy
         box = [px - 45, py - 22, px + 45, py + 22]
     else:
         box = [w // 2 - 60, h // 2 - 30, w // 2 + 60, h // 2 + 30]
@@ -313,6 +315,12 @@ def annotate(img, rect, offset, cfg: Config, fallback_point=None):
     draw.rounded_rectangle([box[0] - 6, box[1] - 6, box[2] + 6, box[3] + 6],
                            radius=9, outline=SIGNAL + (70,), width=6)
     draw.rounded_rectangle(box, radius=5, outline=SIGNAL + (255,), width=3)
+    if point:
+        # Where the pointer actually landed. The box says which control; the
+        # ring says where on it, which matters for wide rows and split buttons.
+        cx, cy = point[0] - ox, point[1] - oy
+        draw.ellipse([cx - RING, cy - RING, cx + RING, cy + RING],
+                     fill=SIGNAL + (40,), outline=SIGNAL + (230,), width=3)
     img = Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
 
     if not cfg.full_frames:
@@ -352,6 +360,22 @@ def relaunch_as_admin() -> bool:
         return rc > 32
     except Exception:
         return False
+
+
+def display_name() -> str:
+    """The signed-in user's display name ("Jane Smith" rather than
+    "jsmith"), for the byline. Falls back to the logon name off-domain."""
+    try:
+        size = ctypes.c_ulong(0)
+        secur32 = ctypes.windll.secur32
+        secur32.GetUserNameExW(3, None, ctypes.byref(size))   # NameDisplay
+        buf = ctypes.create_unicode_buffer(size.value + 1)
+        if size.value and secur32.GetUserNameExW(3, buf, ctypes.byref(size)):
+            if buf.value.strip():
+                return buf.value.strip()
+    except Exception:
+        pass
+    return os.environ.get("USERNAME") or os.environ.get("USER") or ""
 
 
 def foreground_title() -> str:
@@ -651,99 +675,216 @@ class Recorder:
 
 CSS = """
 :root{
-  --ink:#141821; --ink-2:#454d5d; --ink-3:#7b8496;
-  --paper:#fbfbfc; --rule:#e2e5eb; --signal:#d6006e;
+  --bg:#f4f5f8; --card:#fff; --ink:#141821; --ink-2:#454d5d; --ink-3:#687083;
+  --rule:#e2e5eb; --soft:#eef0f4; --signal:#d6006e; --signal-soft:#fdeaf3;
+  --shadow:0 1px 2px rgba(20,24,33,.06),0 4px 16px rgba(20,24,33,.05);
   --display:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
   --body:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
   --mono:"Cascadia Mono",Consolas,"Courier New",monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#111317; --card:#1b1e24; --ink:#eceef2; --ink-2:#b4bac6; --ink-3:#8a92a3;
+    --rule:#2c313a; --soft:#262a32; --signal:#ff4fa3; --signal-soft:#3a1a2b;
+    --shadow:0 1px 2px rgba(0,0,0,.4); color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111317; --card:#1b1e24; --ink:#eceef2; --ink-2:#b4bac6; --ink-3:#8a92a3;
+  --rule:#2c313a; --soft:#262a32; --signal:#ff4fa3; --signal-soft:#3a1a2b;
+  --shadow:0 1px 2px rgba(0,0,0,.4); color-scheme:dark;
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);
+html{scroll-behavior:smooth;scroll-padding-top:24px}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);
   font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased}
-.wrap{max-width:940px;margin:0 auto;padding:56px 28px 96px}
-header{border-bottom:2px solid var(--ink);padding-bottom:24px}
+a{color:var(--signal)}
+.hero{max-width:1120px;margin:0 auto;padding:56px 28px 8px;position:relative}
+.hero-inner{max-width:720px;margin-left:272px}
 .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--signal)}
-h1{font-family:var(--display);font-weight:650;font-size:clamp(28px,5vw,44px);
-  line-height:1.08;letter-spacing:-.02em;margin:10px 0 0}
-.lede{font-size:18px;color:var(--ink-2);max-width:64ch;margin:16px 0 0}
-.meta{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin-top:20px;
-  display:flex;flex-wrap:wrap;gap:18px}
-.steps{position:relative;margin-top:44px}
-.steps::before{content:"";position:absolute;left:17.5px;top:6px;bottom:30px;
-  width:1px;background:var(--rule)}
-.context{position:relative;margin:0 0 20px;padding-left:64px;
-  font-family:var(--mono);font-size:11.5px;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--ink-3)}
-.context::before{content:"";position:absolute;left:0;top:8px;width:36px;
-  height:1px;background:var(--rule)}
-.context:not(:first-child){margin-top:8px}
-.step{position:relative;padding-left:64px;margin-bottom:40px}
-.chip{position:absolute;left:0;top:-2px;width:36px;height:36px;border-radius:5px;
-  border:3px solid var(--signal);background:var(--paper);color:var(--signal);
-  font-family:var(--mono);font-size:14px;font-weight:600;
-  display:flex;align-items:center;justify-content:center}
-.say{font-size:18px;line-height:1.45;margin:0;max-width:62ch}
-.say strong{font-weight:650}
-.say code{font-family:var(--mono);font-size:.86em;background:#eef0f4;
-  border:1px solid var(--rule);border-radius:4px;padding:1px 5px}
-figure{margin:14px 0 0}
-figure img{display:block;width:100%;height:auto;border:1px solid var(--rule);
-  border-radius:6px}
-.note{margin-top:12px;border-left:3px solid var(--signal);background:#fff;
-  padding:12px 16px;font-size:15px}
-.detail{font-size:15px;color:var(--ink-2);margin:6px 0 0;max-width:62ch}
-.prereqs{margin:32px 0 0;padding:20px 24px;background:#fff;border:1px solid var(--rule);
-  border-radius:6px}
+h1{font-family:var(--display);font-weight:650;font-size:clamp(28px,5vw,40px);
+  line-height:1.1;letter-spacing:-.02em;margin:10px 0 0}
+.lede{font-size:18px;color:var(--ink-2);max-width:64ch;margin:14px 0 0}
+.meta{font-size:14px;color:var(--ink-3);margin-top:18px;display:flex;
+  flex-wrap:wrap;gap:6px 18px}
+.meta b{color:var(--ink-2);font-weight:600}
+.tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.tag{font-size:13px;font-weight:600;padding:3px 10px;border-radius:6px;
+  background:var(--card);border:1px solid var(--rule);color:var(--ink-2)}
+.theme{position:absolute;top:24px;right:28px;width:36px;height:36px;
+  border-radius:8px;border:1px solid var(--rule);background:var(--card);
+  color:var(--ink-2);cursor:pointer;font-size:16px;line-height:1}
+.layout{max-width:1120px;margin:0 auto;padding:32px 28px 96px;display:grid;
+  grid-template-columns:240px minmax(0,720px);gap:32px;align-items:start}
+.layout.solo main{grid-column:2}
+.toc{position:sticky;top:20px;background:var(--card);border:1px solid var(--rule);
+  border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+.toc-bar{display:flex;align-items:center;justify-content:space-between;
+  padding:8px 10px;border-bottom:1px solid var(--rule);font-size:14px;color:var(--ink-3)}
+.toc-bar b{color:var(--ink);font-weight:600}
+.toc-bar button{width:30px;height:30px;border:0;border-radius:6px;background:none;
+  color:var(--ink-2);cursor:pointer;font-size:14px}
+.toc-bar button:hover{background:var(--soft)}
+.toc ol{list-style:none;margin:0;padding:6px 0}
+.toc a{display:block;padding:9px 14px;color:var(--ink-2);text-decoration:none;
+  font-size:15px;border-left:3px solid transparent}
+.toc a:hover{background:var(--soft)}
+.toc a.on{color:var(--ink);font-weight:600;background:var(--soft);
+  border-left-color:var(--signal)}
+.prereqs{margin:0 0 28px;padding:18px 22px;background:var(--card);
+  border:1px solid var(--rule);border-radius:12px;box-shadow:var(--shadow)}
 .prereqs h2{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--signal);margin:0 0 10px;font-weight:600}
 .prereqs ul{margin:0;padding-left:20px}
 .prereqs li{margin:0 0 5px;font-size:15px;color:var(--ink-2)}
-.phase{position:relative;margin:0 0 24px;padding-left:64px}
-.phase:not(:first-child){margin-top:36px}
+.phase{display:flex;align-items:center;gap:16px;margin:40px 0 28px}
+.phase:first-child{margin-top:8px}
+.phase::before,.phase::after{content:"";flex:1;height:1px;background:var(--rule)}
 .phase h2{font-family:var(--display);font-size:20px;font-weight:650;margin:0;
-  letter-spacing:-.01em}
-.phase span{font-family:var(--mono);font-size:11px;letter-spacing:.14em;
-  text-transform:uppercase;color:var(--signal);display:block;margin-bottom:4px}
-footer{margin-top:60px;padding-top:18px;border-top:1px solid var(--rule);
+  letter-spacing:-.01em;color:var(--ink-2);text-align:center}
+.context{margin:28px 0 14px;font-family:var(--mono);font-size:11.5px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.step{background:var(--card);border:1px solid var(--rule);border-radius:14px;
+  box-shadow:var(--shadow);padding:18px;margin-bottom:24px}
+.step:target{outline:2px solid var(--signal);outline-offset:2px}
+.head{display:flex;gap:14px;align-items:flex-start}
+.num{flex:none;width:34px;height:34px;border-radius:50%;background:var(--soft);
+  color:var(--ink);font-weight:650;font-size:15px;display:flex;align-items:center;
+  justify-content:center;text-decoration:none}
+.say{font-size:17px;line-height:1.45;margin:5px 0 0;flex:1;min-width:0}
+.say strong{font-weight:650}
+code{font-family:var(--mono);font-size:.86em;background:var(--soft);
+  border:1px solid var(--rule);border-radius:4px;padding:1px 5px}
+.say code{cursor:copy}
+.say code.copied{border-color:var(--signal)}
+.url{display:inline-block;margin-left:4px;padding:1px 8px;border-radius:6px;
+  border:1px solid var(--rule);background:var(--soft);font-weight:600;
+  text-decoration:none;overflow-wrap:anywhere}
+.url:hover{border-color:var(--signal)}
+.detail{font-size:15px;color:var(--ink-2);margin:6px 0 0 48px;max-width:62ch}
+figure{margin:14px 0 0;position:relative}
+figure img{display:block;width:100%;height:auto;border:1px solid var(--rule);
+  border-radius:8px;cursor:zoom-in;background:#fff}
+.note{margin:12px 0 0 48px;border-left:3px solid var(--signal);
+  background:var(--signal-soft);padding:12px 16px;font-size:15px;border-radius:0 8px 8px 0}
+dialog{border:0;padding:0;background:transparent;max-width:96vw;max-height:94vh;
+  overflow:auto}
+dialog::backdrop{background:rgba(8,10,14,.82)}
+dialog img{display:block;max-width:96vw;max-height:94vh;cursor:zoom-in;border-radius:6px}
+dialog.big img{max-width:none;max-height:none;cursor:zoom-out}
+footer{max-width:1120px;margin:0 auto;padding:18px 28px 48px;
   font-family:var(--mono);font-size:11px;color:var(--ink-3);line-height:1.7}
+footer div{margin-left:272px;max-width:720px;border-top:1px solid var(--rule);
+  padding-top:18px}
+@media (max-width:960px){
+  .hero-inner,footer div{margin-left:0}
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .layout.solo main{grid-column:auto}
+  .toc{position:static}
+  .toc-bar{display:none}
+}
 @media (max-width:640px){
-  .wrap{padding:32px 16px 64px}
-  .step,.context{padding-left:0}
-  .steps::before,.context::before{display:none}
-  .chip{position:static;margin-bottom:10px}
+  .hero{padding:40px 16px 4px}
+  .theme{right:16px;top:12px}
+  .layout{padding:24px 16px 64px}
+  footer{padding:18px 16px 40px}
+  .step{padding:14px}
+  .detail,.note{margin-left:0}
 }
 @media print{
-  body{background:#fff}
-  .wrap{max-width:none;padding:0}
+  :root{--bg:#fff;--card:#fff;--ink:#141821;--ink-2:#454d5d;--ink-3:#687083;
+    --rule:#e2e5eb;--soft:#eef0f4;--signal:#d6006e;--shadow:none;color-scheme:light}
+  .toc,.theme{display:none}
+  .hero-inner,footer div{margin-left:0}
+  .layout{display:block;padding:0}
+  .hero,footer{padding-left:0;padding-right:0}
   .step{break-inside:avoid;page-break-inside:avoid}
 }
 """
 
+# Everything stays inline so the guide is one file you can email or drop on a
+# share. No script is needed to read it; the script only adds conveniences.
+JS = """
+(function(){
+  var root=document.documentElement, KEY="scribeling-theme";
+  try{var saved=localStorage.getItem(KEY);if(saved)root.dataset.theme=saved;}catch(e){}
+  var toggle=document.querySelector(".theme");
+  function dark(){return root.dataset.theme?root.dataset.theme==="dark":
+    matchMedia("(prefers-color-scheme: dark)").matches;}
+  function paint(){toggle.textContent=dark()?"\\u2600":"\\u263E";
+    toggle.title=dark()?"Light mode":"Dark mode";}
+  paint();
+  toggle.onclick=function(){root.dataset.theme=dark()?"light":"dark";
+    try{localStorage.setItem(KEY,root.dataset.theme);}catch(e){} paint();};
+
+  var dlg=document.getElementById("zoom"), big=dlg.querySelector("img");
+  document.querySelectorAll("figure img").forEach(function(img){
+    img.onclick=function(){big.src=img.src;big.alt=img.alt;
+      dlg.classList.remove("big");dlg.showModal();};
+  });
+  big.onclick=function(e){e.stopPropagation();dlg.classList.toggle("big");};
+  dlg.onclick=function(){dlg.close();};
+
+  document.querySelectorAll(".say code").forEach(function(c){
+    c.title="Click to copy";
+    c.onclick=function(){if(!navigator.clipboard)return;
+      navigator.clipboard.writeText(c.textContent).then(function(){
+        c.classList.add("copied");setTimeout(function(){c.classList.remove("copied");},900);});};
+  });
+
+  var links=[].slice.call(document.querySelectorAll(".toc a"));
+  if(!links.length)return;
+  var phases=links.map(function(a){return document.getElementById(a.hash.slice(1));});
+  var pos=document.querySelector(".toc-pos"), cur=0;
+  function mark(i){cur=i;links.forEach(function(a,j){a.classList.toggle("on",j===i);});
+    pos.textContent=i+1;}
+  function spy(){var line=innerHeight*0.35, i=0;
+    phases.forEach(function(p,j){if(p.getBoundingClientRect().top<line)i=j;});
+    mark(i);}
+  addEventListener("scroll",spy,{passive:true});spy();
+  function go(d){var i=Math.max(0,Math.min(phases.length-1,cur+d));
+    phases[i].scrollIntoView();mark(i);}
+  document.querySelector(".toc-prev").onclick=function(){go(-1);};
+  document.querySelector(".toc-next").onclick=function(){go(1);};
+})();
+"""
+
 PAGE = """<!doctype html>
+<html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title>
 <style>{css}</style>
-<div class="wrap">
-<header>
-  <div class="eyebrow">Step-by-step procedure</div>
+<header class="hero">
+  <button class="theme" type="button" aria-label="Toggle dark mode"></button>
+  <div class="hero-inner">
+  <div class="eyebrow">Step-by-step guide</div>
   <h1>{title}</h1>
   {lede}
-  <div class="meta"><span>{count} steps</span><span>Captured {date}</span></div>
+  <div class="meta">{meta}</div>
+  {tags}
+  </div>
 </header>
+<div class="layout{solo}">
+{toc}
+<main>
 {prereqs}
-<div class="steps">
 {steps}
+</main>
 </div>
-<footer>Recorded with scribeling. Screenshots come from a live session &mdash;
-check them for anything that should not leave the room before you share this.</footer>
-</div>
+<footer><div>Recorded with scribeling. Screenshots come from a live session &mdash;
+check them for anything that should not leave the room before you share this.</div></footer>
+<dialog id="zoom" aria-label="Enlarged screenshot"><img alt=""></dialog>
+<script>{js}</script>
+</html>
 """
 
 
 def esc(s: str) -> str:
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+             .replace('"', "&quot;"))
 
 
 def render_caption(text: str) -> str:
@@ -766,31 +907,65 @@ def render_caption(text: str) -> str:
     return "".join(out)
 
 
+def render_url(url: str) -> str:
+    """Only http(s) becomes a link - steps.json is hand-edited, and a
+    javascript: URL in a guide that gets emailed around is a gift to someone."""
+    url = (url or "").strip()
+    if not re.match(r"https?://", url, re.I):
+        return f"<code>{esc(url)}</code>" if url else ""
+    return (f'<a class="url" href="{esc(url)}" target="_blank" '
+            f'rel="noopener">{esc(url)} &#8599;</a>')
+
+
+def parse_ts(value):
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def duration_label(visible) -> str:
+    """Wall-clock time from first to last recorded step, which is what a reader
+    will actually spend. Falls back to a few seconds a step when timestamps are
+    missing or the recording was paused for a coffee."""
+    stamps = [t for t in (parse_ts(s.get("ts")) for s in visible) if t]
+    seconds = (stamps[-1] - stamps[0]).total_seconds() if len(stamps) > 1 else 0
+    if seconds <= 0 or seconds > len(visible) * 120:
+        seconds = len(visible) * 6
+    minutes = max(1, round(seconds / 60))
+    return f"{minutes} minute{'s' if minutes != 1 else ''}"
+
+
 def build_html(session: Path, payload: dict) -> Path:
     """Render a session to a single self-contained HTML file.
 
-    Recognised keys: title, description, prerequisites (list of strings), and
-    steps. Each step may carry `phase` (a heading introducing the steps that
-    follow), `detail` (one clarifying sentence under the instruction), `caption`,
-    `note` and `hidden`. Phases, when present, replace the automatic
-    window-title context lines - a human-written grouping beats a guessed one.
+    Recognised keys: title, description, author, tags (list of strings),
+    prerequisites (list of strings), and steps. Each step may carry `phase` (a
+    heading introducing the steps that follow), `detail` (one clarifying sentence
+    under the instruction), `url` (rendered as a link after the caption),
+    `caption`, `note` and `hidden`. Phases, when present, replace the automatic
+    window-title context lines and drive the contents sidebar - a human-written
+    grouping beats a guessed one.
     """
     shots = session / "shots"
     title = payload.get("title", "Untitled procedure")
     description = payload.get("description", "") or ""
+    author = (payload.get("author") or "").strip()
+    tags = [str(t).strip() for t in payload.get("tags", []) if str(t).strip()]
     prerequisites = [p for p in payload.get("prerequisites", []) if str(p).strip()]
     steps = payload.get("steps", [])
 
     visible = [s for s in steps if not s.get("hidden")]
     use_phases = any(s.get("phase") for s in visible)
-    blocks, seen_phase, seen_window = [], None, None
+    blocks, phases, seen_phase, seen_window = [], [], None, None
 
     for n, s in enumerate(visible, 1):
         if use_phases:
             phase = s.get("phase", "")
             if phase and phase != seen_phase:
                 seen_phase = phase
-                blocks.append(f'<div class="phase"><span>Stage</span>'
+                phases.append(phase)
+                blocks.append(f'<div class="phase" id="stage-{len(phases)}">'
                               f'<h2>{esc(phase)}</h2></div>')
         else:
             window = s.get("window", "")
@@ -802,21 +977,49 @@ def build_html(session: Path, payload: dict) -> Path:
         path = shots / s.get("image", "")
         if s.get("image") and path.exists():
             data = base64.b64encode(path.read_bytes()).decode()
-            img_html = (f'<figure><img alt="Step {n}" '
+            img_html = (f'<figure><img alt="Step {n} screenshot" loading="lazy" '
                         f'src="data:image/png;base64,{data}"></figure>')
 
         caption = s.get("caption", "").strip()
-        say = f'<p class="say">{render_caption(caption)}</p>' if caption else ""
+        if not caption and s.get("action") == "navigate":
+            caption = "Navigate to"
+        link = render_url(s.get("url", ""))
+        say = " ".join(x for x in (render_caption(caption), link) if x)
+        say_html = f'<p class="say">{say}</p>' if say else '<p class="say"></p>'
         detail = s.get("detail", "").strip()
         detail_html = (f'<p class="detail">{render_caption(detail)}</p>'
                        if detail else "")
         note = s.get("note", "") if s.get("action") == "note" else ""
         note_html = f'<div class="note">{render_caption(note)}</div>' if note else ""
         blocks.append(
-            f'<section class="step"><div class="chip">{n}</div>'
-            f'{say}{detail_html}{img_html}{note_html}</section>')
+            f'<section class="step" id="step-{n}"><div class="head">'
+            f'<a class="num" href="#step-{n}">{n}</a>{say_html}</div>'
+            f'{detail_html}{img_html}{note_html}</section>')
+
+    toc = ""
+    if len(phases) > 1:
+        items = "".join(f'<li><a href="#stage-{i}">{esc(p)}</a></li>'
+                        for i, p in enumerate(phases, 1))
+        toc = ('<nav class="toc" aria-label="Stages"><div class="toc-bar">'
+               '<button class="toc-prev" type="button" aria-label="Previous stage">'
+               '&#9650;</button><span><b class="toc-pos">1</b> of '
+               f'{len(phases)}</span><button class="toc-next" type="button" '
+               f'aria-label="Next stage">&#9660;</button></div><ol>{items}</ol></nav>')
+
+    # The capture date, not the rebuild date - a guide rebuilt next month was
+    # still recorded when it was recorded.
+    stamps = [t for t in (parse_ts(s.get("ts")) for s in steps) if t]
+    when = (stamps[0] if stamps else datetime.now()).strftime("%d %b %Y")
+    meta = []
+    if author:
+        meta.append(f"<b>{esc(author)}</b>")
+    meta += [f"<span>{len(visible)} steps</span>",
+             f"<span>{duration_label(visible)}</span>",
+             f"<span>Captured {when}</span>"]
 
     lede = f'<p class="lede">{esc(description)}</p>' if description.strip() else ""
+    tags_html = ("<div class=\"tags\">" + "".join(
+        f'<span class="tag">{esc(t)}</span>' for t in tags) + "</div>") if tags else ""
     prereqs = ""
     if prerequisites:
         items = "".join(f"<li>{render_caption(str(p))}</li>" for p in prerequisites)
@@ -824,14 +1027,16 @@ def build_html(session: Path, payload: dict) -> Path:
 
     out = session / "guide.html"
     out.write_text(PAGE.format(
-        title=esc(title), css=CSS, lede=lede, prereqs=prereqs, count=len(visible),
-        date=datetime.now().strftime("%d %b %Y"), steps="\n".join(blocks),
+        title=esc(title), css=CSS, js=JS, lede=lede, meta="".join(meta),
+        tags=tags_html, solo="" if toc else " solo", toc=toc, prereqs=prereqs,
+        steps="\n".join(blocks),
     ), encoding="utf-8")
     return out
 
 
 def save_session(session: Path, cfg: Config, steps):
     payload = {"title": cfg.title, "description": cfg.description,
+               "author": cfg.author,
                "steps": [asdict(s) if isinstance(s, Step) else s for s in steps]}
     (session / "steps.json").write_text(json.dumps(payload, indent=2),
                                         encoding="utf-8")
@@ -888,7 +1093,7 @@ def run_gui(prefill: Config | None = None):
     # -- setup -------------------------------------------------------------
 
     def setup():
-        win = shell("scribeling", "540x660")
+        win = shell("scribeling", "540x740")
         win.protocol("WM_DELETE_WINDOW", root.destroy)
 
         tk.Label(win, text="NEW RECORDING", bg=BG, fg=ACCENT,
@@ -925,6 +1130,13 @@ def run_gui(prefill: Config | None = None):
         entry = tk.Entry(win, textvariable=title_var, font=("Segoe UI", 11),
                          relief="solid", bd=1)
         entry.pack(fill="x", padx=28, pady=(4, 16), ipady=5)
+
+        tk.Label(win, text="Author", bg=BG, fg=FG,
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=28)
+        author_var = tk.StringVar(value=(prefill.author if prefill and prefill.author
+                                         else display_name()))
+        tk.Entry(win, textvariable=author_var, font=("Segoe UI", 11),
+                 relief="solid", bd=1).pack(fill="x", padx=28, pady=(4, 16), ipady=5)
 
         tk.Label(win, text="Description", bg=BG, fg=FG,
                  font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=28)
@@ -967,6 +1179,7 @@ def run_gui(prefill: Config | None = None):
                 return
             cfg = Config(title=title_var.get().strip(),
                          description=desc.get("1.0", "end").strip(),
+                         author=author_var.get().strip(),
                          outdir=Path(outdir.get()), dim=dim.get(),
                          mask_typed=mask.get(), capture_typing=typing.get())
             session = cfg.outdir / datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -1168,6 +1381,7 @@ def run_gui(prefill: Config | None = None):
 
 def cmd_record(args):
     cfg = Config(title=args.title, description=args.description or "",
+                 author=args.author if args.author is not None else display_name(),
                  outdir=Path(args.outdir), pad=args.pad, full_frames=args.full,
                  dim=args.dim, truecolor=args.truecolor,
                  mask_typed=args.mask_typed, capture_typing=not args.no_typing)
@@ -1196,12 +1410,15 @@ def cmd_rebuild(args):
     payload = json.loads((session / "steps.json").read_text(encoding="utf-8"))
     if args.title:
         payload["title"] = args.title
+    if args.author is not None:
+        payload["author"] = args.author
     out = build_html(session, payload)
     print(f"Rebuilt -> {out}")
 
 
 def cmd_gui(args):
     run_gui(Config(title=args.title or "", description=args.description or "",
+                   author=args.author or "",
                    outdir=Path(args.outdir) if args.outdir else None))
 
 
@@ -1216,6 +1433,7 @@ def main():
     r = sub.add_parser("record")
     r.add_argument("--title", default="Untitled procedure")
     r.add_argument("--description", default="")
+    r.add_argument("--author", default=None)
     r.add_argument("--outdir", default="guides")
     r.add_argument("--pad", type=int, default=DEFAULT_PAD)
     r.add_argument("--full", action="store_true")
@@ -1228,12 +1446,14 @@ def main():
     g = sub.add_parser("gui", help="open the GUI with fields prefilled")
     g.add_argument("--title", default="")
     g.add_argument("--description", default="")
+    g.add_argument("--author", default="")
     g.add_argument("--outdir", default="")
     g.set_defaults(func=cmd_gui)
 
     b = sub.add_parser("rebuild")
     b.add_argument("session")
     b.add_argument("--title", default=None)
+    b.add_argument("--author", default=None)
     b.set_defaults(func=cmd_rebuild)
 
     args = p.parse_args()
