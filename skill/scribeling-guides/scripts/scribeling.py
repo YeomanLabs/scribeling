@@ -54,7 +54,8 @@ MIN_CROP = (900, 420)
 MAX_WIDTH = 1400
 DEDUPE_WINDOW = 1.6      # seconds; a repeat click on one target is one step
 MAX_TARGET_AREA = 0.45   # bigger than this is a container, not a target
-RING = 18                # radius of the click-point marker, in screen pixels
+HAND = 1.7               # pointer-hand scale; 1.0 is about 27px wide
+GLOW = (255, 196, 40)    # warm halo under the click point
 
 
 @dataclass
@@ -288,6 +289,53 @@ def fit_span(lo, hi, minimum, limit):
     return max(0, lo), min(limit, hi)
 
 
+_HAND_CACHE: dict = {}
+
+
+def hand_sprite(scale: float = HAND):
+    """A white pointing hand with a dark outline, drawn rather than shipped as
+    an asset so the recorder stays one file. Returns (RGBA image, hotspot),
+    where the hotspot is the fingertip. Drawn at 4x and scaled down so the
+    edges are smooth."""
+    if scale in _HAND_CACHE:
+        return _HAND_CACHE[scale]
+    from PIL import Image, ImageDraw, ImageFilter
+
+    ss = 4 * scale
+    ox, oy = 12, 2          # fingertip sits at (0, 0) in the units below
+    W, H = int(32 * ss), int(36 * ss)
+
+    def box(x0, y0, x1, y1):
+        return [(x0 + ox) * ss, (y0 + oy) * ss, (x1 + ox) * ss, (y1 + oy) * ss]
+
+    mask = Image.new("L", (W, H), 0)
+    d = ImageDraw.Draw(mask)
+    d.rounded_rectangle(box(-3, 0, 3, 17), radius=3 * ss, fill=255)      # index
+    d.rounded_rectangle(box(2.6, 9, 7.8, 17), radius=2.6 * ss, fill=255)  # middle
+    d.rounded_rectangle(box(7.4, 10, 12.2, 18), radius=2.4 * ss, fill=255)
+    d.rounded_rectangle(box(11.8, 12, 16, 19), radius=2.1 * ss, fill=255)
+    d.rounded_rectangle(box(-6, 13, 16, 28), radius=5 * ss, fill=255)     # palm
+    d.ellipse(box(-11.5, 12.5, -3, 21), fill=255)                         # thumb
+    d.polygon([tuple(box(-9, 17, 0, 0)[:2]), tuple(box(-3, 13, 0, 0)[:2]),
+               tuple(box(-3, 24, 0, 0)[:2])], fill=255)
+    d.rounded_rectangle(box(-4, 26, 14, 31), radius=1.5 * ss, fill=255)   # cuff
+
+    edge = mask.filter(ImageFilter.MaxFilter(int(ss * 1.4) | 1))
+    sprite = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sprite.paste((24, 24, 28, 255), (0, 0), edge)
+    sprite.paste((255, 255, 255, 255), (0, 0), mask)
+    lines = ImageDraw.Draw(sprite)
+    for x, y0, y1 in ((2.8, 12, 17), (7.6, 13, 18), (12, 14.5, 19)):
+        lines.line(box(x, y0, x, y1)[:2] + box(x, y0, x, y1)[2:],
+                   fill=(150, 150, 158, 255), width=max(1, int(ss * .6)))
+    lines.line(box(-4, 26, 14, 26)[:2] + box(-4, 26, 14, 26)[2:],
+               fill=(24, 24, 28, 255), width=max(1, int(ss * .7)))
+
+    sprite = sprite.resize((W // 4, H // 4), Image.LANCZOS)
+    _HAND_CACHE[scale] = (sprite, (int(ox * scale), int(oy * scale)))
+    return _HAND_CACHE[scale]
+
+
 def annotate(img, rect, offset, cfg: Config, point=None):
     from PIL import Image, ImageDraw
 
@@ -315,13 +363,21 @@ def annotate(img, rect, offset, cfg: Config, point=None):
     draw.rounded_rectangle([box[0] - 6, box[1] - 6, box[2] + 6, box[3] + 6],
                            radius=9, outline=SIGNAL + (70,), width=6)
     draw.rounded_rectangle(box, radius=5, outline=SIGNAL + (255,), width=3)
+    img = Image.alpha_composite(img.convert("RGBA"), layer)
+
     if point:
         # Where the pointer actually landed. The box says which control; the
-        # ring says where on it, which matters for wide rows and split buttons.
-        cx, cy = point[0] - ox, point[1] - oy
-        draw.ellipse([cx - RING, cy - RING, cx + RING, cy + RING],
-                     fill=SIGNAL + (40,), outline=SIGNAL + (230,), width=3)
-    img = Image.alpha_composite(img.convert("RGBA"), layer).convert("RGB")
+        # hand says where on it, which matters for wide rows and split buttons.
+        from PIL import ImageFilter
+        cx, cy = int(point[0] - ox), int(point[1] - oy)
+        glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        r = 30
+        ImageDraw.Draw(glow).ellipse([cx - r, cy - r, cx + r, cy + r],
+                                     fill=GLOW + (150,))
+        img = Image.alpha_composite(img, glow.filter(ImageFilter.GaussianBlur(14)))
+        sprite, (hx, hy) = hand_sprite()
+        img.alpha_composite(sprite, (max(0, cx - hx), max(0, cy - hy)))
+    img = img.convert("RGB")
 
     if not cfg.full_frames:
         l, r = fit_span(box[0] - cfg.pad, box[2] + cfg.pad, MIN_CROP[0], w)
@@ -1058,11 +1114,12 @@ def strip_marks(text: str) -> str:
 # GUI
 # --------------------------------------------------------------------------
 
-def run_gui(prefill: Config | None = None):
+def run_gui(prefill: Config | None = None, edit: Path | None = None):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
 
     BG, FG, MUTED, ACCENT, SOFT = "#fbfbfc", "#141821", "#7b8496", "#d6006e", "#eef0f4"
+    CARD = "#ffffff"
 
     root = tk.Tk()
     root.withdraw()
@@ -1072,7 +1129,7 @@ def run_gui(prefill: Config | None = None):
     except Exception:
         pass
 
-    state = {"cfg": None, "session": None, "steps": None}
+    state = {"cfg": None, "session": None}
 
     def shell(title, size):
         win = tk.Toplevel(root)
@@ -1093,7 +1150,7 @@ def run_gui(prefill: Config | None = None):
     # -- setup -------------------------------------------------------------
 
     def setup():
-        win = shell("scribeling", "540x740")
+        win = shell("scribeling", "540x790")
         win.protocol("WM_DELETE_WINDOW", root.destroy)
 
         tk.Label(win, text="NEW RECORDING", bg=BG, fg=ACCENT,
@@ -1192,6 +1249,10 @@ def run_gui(prefill: Config | None = None):
                                                     ipady=9)
         tk.Label(win, text="F7 pause    F8 finish    F9 undo    F10 note",
                  bg=BG, fg=MUTED, font=("Consolas", 9)).pack(pady=(12, 0))
+        tk.Button(win, text="Edit an existing recording…",
+                  command=lambda: open_existing(win), relief="flat", bd=0, bg=BG,
+                  fg=ACCENT, activebackground=BG, cursor="hand2",
+                  font=("Segoe UI", 10, "underline")).pack(pady=(10, 0))
         entry.focus_set()
 
     # -- recording HUD -----------------------------------------------------
@@ -1224,8 +1285,8 @@ def run_gui(prefill: Config | None = None):
 
         def finish():
             win.destroy()
-            state["steps"] = [asdict(s) for s in rec.shutdown()]
-            review()
+            payload = save_session(session, cfg, rec.shutdown())
+            editor(session, payload)
 
         def pump():
             while True:
@@ -1269,28 +1330,79 @@ def run_gui(prefill: Config | None = None):
         rec.start()
         win.after(200, pump)
 
-    # -- review ------------------------------------------------------------
+    # -- editor ------------------------------------------------------------
 
-    def review():
+    def editor(session: Path, payload: dict):
+        """Every edit lands in payload in place. Deleting a step hides it rather
+        than removing it, so screenshots and indexes never drift apart, and undo
+        is just restoring a snapshot of the step list."""
         from PIL import Image, ImageTk
-        cfg, session, steps = state["cfg"], state["session"], state["steps"]
 
-        win = shell("Review", "780x700")
-        win.protocol("WM_DELETE_WINDOW", root.destroy)
+        steps = payload.setdefault("steps", [])
+        history: list[str] = []
+        rows: list[tuple] = []
+        thumbs: dict = {}
+        dirty = {"on": False, "quiet": False}
 
-        tk.Label(win, text="BEFORE EXPORT", bg=BG, fg=ACCENT,
-                 font=("Consolas", 9)).pack(anchor="w", padx=24, pady=(22, 0))
-        tk.Label(win, text="Fix the captions", bg=BG, fg=FG,
-                 font=("Segoe UI", 18, "bold")).pack(anchor="w", padx=24)
-        tk.Label(win, text="Captions come from the accessibility name of whatever "
-                           "you clicked, so a few will read oddly. Untick anything "
-                           "you want dropped.",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 9), wraplength=700,
-                 justify="left").pack(anchor="w", padx=24, pady=(2, 12))
+        win = shell("scribeling - edit guide", "1000x860")
 
+        # -- header --------------------------------------------------------
+        head = tk.Frame(win, bg=BG)
+        head.pack(fill="x", padx=24, pady=(18, 0))
+        tk.Label(head, text="EDIT GUIDE", bg=BG, fg=ACCENT,
+                 font=("Consolas", 9)).pack(anchor="w")
+        title_var = tk.StringVar(value=payload.get("title", ""))
+        tk.Entry(head, textvariable=title_var, font=("Segoe UI", 17, "bold"),
+                 relief="flat", bg=BG, fg=FG, bd=0).pack(fill="x", pady=(2, 4))
+        meta = tk.Frame(head, bg=BG)
+        meta.pack(fill="x")
+        desc_var = tk.StringVar(value=payload.get("description", ""))
+        author_var = tk.StringVar(value=payload.get("author", ""))
+        for label, var, weight in (("Description", desc_var, 3),
+                                   ("Author", author_var, 1)):
+            cell = tk.Frame(meta, bg=BG)
+            cell.pack(side="left", fill="x", expand=True, padx=(0, 10))
+            tk.Label(cell, text=label, bg=BG, fg=MUTED,
+                     font=("Segoe UI", 9)).pack(anchor="w")
+            tk.Entry(cell, textvariable=var, font=("Segoe UI", 10), relief="solid",
+                     bd=1, width=12 * weight).pack(fill="x", ipady=3)
+        for var in (title_var, desc_var, author_var):
+            var.trace_add("write", lambda *_: touch())
+
+        # -- toolbar -------------------------------------------------------
+        tools = tk.Frame(win, bg=BG)
+        tools.pack(fill="x", padx=24, pady=(14, 8))
+        count = tk.Label(tools, bg=BG, fg=MUTED, font=("Consolas", 9))
+        count.pack(side="left")
+        del_sel = tk.Button(tools, text="Delete selected", relief="flat", bd=0,
+                            bg=SOFT, fg=ACCENT, font=("Segoe UI", 10, "bold"),
+                            command=lambda: delete_selected(), cursor="hand2")
+        del_sel.pack(side="right", ipadx=10, ipady=3)
+        undo_btn = secondary(tools, "Undo", lambda: undo())
+        undo_btn.pack(side="right", padx=6, ipadx=10, ipady=3)
+        secondary(tools, "Select none",
+                  lambda: [r[4].set(False) for r in rows]).pack(
+                      side="right", ipadx=8, ipady=3)
+        secondary(tools, "Select all",
+                  lambda: [r[4].set(True) for r in rows]).pack(
+                      side="right", padx=6, ipadx=8, ipady=3)
+        tk.Label(win, text="Captions take **bold** and `code`. Stage groups steps "
+                           "into sections; a step with no stage stays in the one "
+                           "above it. Deleted steps can be brought back with Undo.",
+                 bg=BG, fg=MUTED, font=("Segoe UI", 9), wraplength=940,
+                 justify="left").pack(anchor="w", padx=24, pady=(0, 8))
+
+        # -- footer --------------------------------------------------------
         bar = tk.Frame(win, bg=BG)
         bar.pack(side="bottom", fill="x", padx=24, pady=14)
+        saved = tk.Label(bar, text="", bg=BG, fg=MUTED, font=("Segoe UI", 9))
+        saved.pack(side="left")
+        primary(bar, "Export guide", lambda: export()).pack(side="right",
+                                                            ipadx=18, ipady=7)
+        secondary(bar, "Save", lambda: save()).pack(side="right", padx=8,
+                                                    ipadx=14, ipady=7)
 
+        # -- scrolling list ------------------------------------------------
         holder = tk.Frame(win, bg=BG)
         holder.pack(fill="both", expand=True)
         canvas = tk.Canvas(holder, bg=BG, highlightthickness=0)
@@ -1304,74 +1416,362 @@ def run_gui(prefill: Config | None = None):
         canvas.configure(yscrollcommand=scroll.set)
         canvas.pack(side="left", fill="both", expand=True, padx=(24, 0))
         scroll.pack(side="right", fill="y", padx=(0, 8))
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
 
-        rows, thumbs = [], []
-        for s in steps:
-            frame = tk.Frame(inner, bg=BG)
-            frame.pack(fill="x", pady=(0, 14), padx=(0, 12))
-            keep = tk.BooleanVar(value=True)
-            top = tk.Frame(frame, bg=BG)
-            top.pack(fill="x")
-            tk.Checkbutton(top, variable=keep, bg=BG, activebackground=BG,
-                           highlightthickness=0, bd=0).pack(side="left")
-            tk.Label(top, text=f"{s['index']:>3}", bg=BG, fg=ACCENT,
-                     font=("Consolas", 9)).pack(side="left")
-            var = tk.StringVar(value=s["caption"])
-            tk.Entry(top, textvariable=var, font=("Segoe UI", 10), relief="solid",
-                     bd=1).pack(side="left", fill="x", expand=True, padx=8, ipady=3)
+        def wheel(e):
+            delta = -1 if getattr(e, "num", 0) == 4 else 1 if getattr(e, "num", 0) == 5 \
+                else int(-e.delta / 120)
+            canvas.yview_scroll(delta, "units")
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            win.bind_all(seq, wheel)
 
-            shot = session / "shots" / s.get("image", "")
-            if s.get("image") and shot.exists():
-                try:
-                    im = Image.open(shot)
-                    im.thumbnail((320, 160))
-                    ph = ImageTk.PhotoImage(im)
-                    thumbs.append(ph)
-                    tk.Label(frame, image=ph, bg=BG).pack(anchor="w",
-                                                          padx=(46, 0), pady=(6, 0))
-                except Exception:
-                    pass
-            rows.append((s, var, keep))
+        # -- state ---------------------------------------------------------
+
+        def visible():
+            return [s for s in steps if not s.get("hidden")]
+
+        def touch():
+            if dirty["quiet"]:
+                return
+            dirty["on"] = True
+            saved.config(text="Unsaved changes")
+
+        def sync():
+            """Pull whatever is typed in the boxes back into the step dicts."""
+            payload["title"] = title_var.get().strip() or "Untitled procedure"
+            payload["description"] = desc_var.get().strip()
+            payload["author"] = author_var.get().strip()
+            for s, cap, det, stage, _ in rows:
+                s["caption"] = cap.get("1.0", "end-1c").strip()
+                for key, value in (("detail", det.get("1.0", "end-1c").strip()),
+                                   ("phase", stage.get().strip())):
+                    if value:
+                        s[key] = value
+                    else:
+                        s.pop(key, None)
+
+        def change(fn):
+            sync()
+            history.append(json.dumps(steps))
+            del history[:-60]
+            fn()
+            touch()
+            render()
+
+        def undo():
+            if not history:
+                return
+            steps[:] = json.loads(history.pop())
+            touch()
+            render()
+
+        def delete(s):
+            change(lambda: s.update(hidden=True))
+
+        def delete_selected():
+            picked = [r[0] for r in rows if r[4].get()]
+            if picked:
+                change(lambda: [s.update(hidden=True) for s in picked])
+
+        def move(s, d):
+            vis = visible()
+            i = vis.index(s)
+            if not 0 <= i + d < len(vis):
+                return
+            other = vis[i + d]
+
+            def swap():
+                a, b = steps.index(s), steps.index(other)
+                steps[a], steps[b] = steps[b], steps[a]
+            change(swap)
+
+        def merge_up(s):
+            """Fold this step into the one above: captions join, and the merged
+            step keeps the later screenshot, since that shows the end state."""
+            vis = visible()
+            i = vis.index(s)
+            if i == 0:
+                return
+            prev = vis[i - 1]
+
+            def merge():
+                a, b = prev.get("caption", "").strip(), s.get("caption", "").strip()
+                if a and b:
+                    b = b[0].lower() + b[1:]
+                    prev["caption"] = f"{a.rstrip('.')}, then {b}"
+                else:
+                    prev["caption"] = a or b
+                details = " ".join(x for x in (prev.get("detail", ""),
+                                               s.get("detail", "")) if x.strip())
+                if details:
+                    prev["detail"] = details
+                if s.get("image"):
+                    prev["image"] = s["image"]
+                s["hidden"] = True
+            change(merge)
+
+        def add_after(s):
+            def add():
+                top = max([x.get("index", 0) for x in steps] + [0]) + 1
+                new = {"index": top, "action": "note", "caption": "",
+                       "image": "", "phase": s.get("phase", "")}
+                steps.insert(steps.index(s) + 1, new)
+            change(add)
+
+        def replace_image(s):
+            chosen = filedialog.askopenfilename(
+                parent=win, title="Choose a screenshot",
+                filetypes=[("Images", "*.png *.jpg *.jpeg *.bmp *.gif"),
+                           ("All files", "*.*")])
+            if not chosen:
+                return
+            try:
+                im = Image.open(chosen).convert("RGB")
+                if im.width > MAX_WIDTH:
+                    im = im.resize((MAX_WIDTH, int(im.height * MAX_WIDTH / im.width)),
+                                   Image.LANCZOS)
+                shots = session / "shots"
+                shots.mkdir(exist_ok=True)
+                n = 1
+                while (shots / f"step-{s.get('index', 0):03d}-alt{n}.png").exists():
+                    n += 1
+                name = f"step-{s.get('index', 0):03d}-alt{n}.png"
+                im.save(shots / name, optimize=True)
+            except Exception as exc:
+                messagebox.showerror("scribeling", f"Could not use that image:\n{exc}",
+                                     parent=win)
+                return
+            change(lambda: s.update(image=name))
+
+        def remove_image(s):
+            change(lambda: s.update(image=""))
+
+        def preview(path: Path):
+            top = tk.Toplevel(win)
+            top.title(path.name)
+            top.configure(bg="#111317")
+            im = Image.open(path)
+            im.thumbnail((int(win.winfo_screenwidth() * .85),
+                          int(win.winfo_screenheight() * .8)))
+            ph = ImageTk.PhotoImage(im)
+            lbl = tk.Label(top, image=ph, bg="#111317", cursor="hand2")
+            lbl.image = ph
+            lbl.pack(padx=10, pady=10)
+            lbl.bind("<Button-1>", lambda e: top.destroy())
+            top.bind("<Escape>", lambda e: top.destroy())
+            top.focus_set()
+
+        def thumb(path: Path):
+            key = (str(path), path.stat().st_mtime)
+            if key not in thumbs:
+                im = Image.open(path)
+                im.thumbnail((360, 200))
+                thumbs[key] = ImageTk.PhotoImage(im)
+            return thumbs[key]
+
+        # -- rendering -----------------------------------------------------
+
+        def small(parent, text, cmd, fg=FG, state="normal"):
+            b = tk.Button(parent, text=text, command=cmd, relief="flat", bd=0,
+                          bg=SOFT, fg=fg, activebackground="#e2e5eb",
+                          font=("Segoe UI", 9), cursor="hand2", state=state)
+            b.pack(side="left", padx=(4, 0), ipadx=7, ipady=1)
+            return b
+
+        def labelled(parent, label, row):
+            tk.Label(parent, text=label, bg=CARD, fg=MUTED, font=("Segoe UI", 9),
+                     anchor="nw", width=7).grid(row=row, column=0, sticky="nw",
+                                                pady=(4, 0))
+
+        def render():
+            dirty["quiet"] = True
+            y = canvas.yview()[0]
+            for child in inner.winfo_children():
+                child.destroy()
+            rows.clear()
+            vis = visible()
+            stages = []
+            for s in vis:
+                if s.get("phase") and s["phase"] not in stages:
+                    stages.append(s["phase"])
+
+            for n, s in enumerate(vis, 1):
+                card = tk.Frame(inner, bg=CARD, highlightbackground="#e2e5eb",
+                                highlightthickness=1)
+                card.pack(fill="x", pady=(0, 12), padx=(0, 12))
+
+                top = tk.Frame(card, bg=CARD)
+                top.pack(fill="x", padx=12, pady=(10, 4))
+                pick = tk.BooleanVar(value=False)
+                tk.Checkbutton(top, variable=pick, bg=CARD, activebackground=CARD,
+                               highlightthickness=0, bd=0).pack(side="left")
+                tk.Label(top, text=str(n), bg=CARD, fg=ACCENT,
+                         font=("Segoe UI", 12, "bold")).pack(side="left", padx=(4, 8))
+                tk.Label(top, text=s.get("action", "click"), bg=CARD, fg=MUTED,
+                         font=("Consolas", 9)).pack(side="left")
+                tk.Button(top, text="✕ Delete", command=lambda s=s: delete(s),
+                          relief="flat", bd=0, bg=CARD, fg=ACCENT, cursor="hand2",
+                          activebackground="#fdf0f6",
+                          font=("Segoe UI", 9, "bold")).pack(side="right",
+                                                             padx=(8, 0), ipadx=6)
+                tools = tk.Frame(top, bg=CARD)
+                tools.pack(side="right")
+                small(tools, "↑", lambda s=s: move(s, -1),
+                      state="normal" if n > 1 else "disabled")
+                small(tools, "↓", lambda s=s: move(s, 1),
+                      state="normal" if n < len(vis) else "disabled")
+                small(tools, "Merge up", lambda s=s: merge_up(s),
+                      state="normal" if n > 1 else "disabled")
+                small(tools, "Image…", lambda s=s: replace_image(s))
+                if s.get("image"):
+                    small(tools, "No image", lambda s=s: remove_image(s))
+                small(tools, "+ Step below", lambda s=s: add_after(s))
+
+                body = tk.Frame(card, bg=CARD)
+                body.pack(fill="x", padx=(40, 14), pady=(0, 10))
+                body.columnconfigure(1, weight=1)
+
+                labelled(body, "Step", 0)
+                cap = tk.Text(body, height=2, wrap="word", font=("Segoe UI", 10),
+                              relief="solid", bd=1, undo=True)
+                cap.insert("1.0", s.get("caption", ""))
+                cap.grid(row=0, column=1, sticky="ew", pady=2)
+
+                labelled(body, "Detail", 1)
+                det = tk.Text(body, height=2, wrap="word", font=("Segoe UI", 10),
+                              relief="solid", bd=1, undo=True)
+                det.insert("1.0", s.get("detail", ""))
+                det.grid(row=1, column=1, sticky="ew", pady=2)
+
+                labelled(body, "Stage", 2)
+                stage = ttk.Combobox(body, values=stages, font=("Segoe UI", 10))
+                stage.set(s.get("phase", ""))
+                stage.grid(row=2, column=1, sticky="ew", pady=2)
+                for w in (cap, det):
+                    w.bind("<<Modified>>",
+                           lambda e: (touch(), e.widget.edit_modified(False)))
+                stage.bind("<KeyRelease>", lambda e: touch())
+                stage.bind("<<ComboboxSelected>>", lambda e: touch())
+
+                where = "   ".join(x for x in (s.get("window", ""), s.get("target", ""))
+                                   if x)
+                if s.get("url"):
+                    where = (where + "   " if where else "") + s["url"]
+                if where:
+                    tk.Label(body, text=where, bg=CARD, fg="#4a6fa5",
+                             font=("Consolas", 9), anchor="w").grid(
+                                 row=3, column=1, sticky="w", pady=(6, 0))
+
+                path = session / "shots" / s.get("image", "")
+                if s.get("image") and path.is_file():
+                    try:
+                        ph = thumb(path)
+                        lbl = tk.Label(body, image=ph, bg=CARD, cursor="hand2",
+                                       highlightbackground="#e2e5eb",
+                                       highlightthickness=1)
+                        lbl.grid(row=4, column=1, sticky="w", pady=(8, 0))
+                        lbl.bind("<Button-1>", lambda e, p=path: preview(p))
+                    except Exception:
+                        pass
+
+                rows.append((s, cap, det, stage, pick))
+
+            if not vis:
+                tk.Label(inner, text="No steps left. Undo brings deleted ones back.",
+                         bg=BG, fg=MUTED, font=("Segoe UI", 11)).pack(pady=40)
+            hidden = len(steps) - len(vis)
+            count.config(text=f"{len(vis)} steps" +
+                         (f"  ·  {hidden} deleted" if hidden else ""))
+            undo_btn.config(state="normal" if history else "disabled")
+            win.update_idletasks()
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            canvas.yview_moveto(y)
+            win.after_idle(lambda: dirty.update(quiet=False))
+
+        # -- saving --------------------------------------------------------
+
+        def save():
+            sync()
+            (session / "steps.json").write_text(json.dumps(payload, indent=2),
+                                                encoding="utf-8")
+            dirty["on"] = False
+            saved.config(text=f"Saved {datetime.now():%H:%M}")
 
         def export():
-            for s, var, keep in rows:
-                s["caption"] = var.get()
-                s["hidden"] = not keep.get()
-            ordered = [s for s, _, _ in rows]
-            payload = save_session(session, cfg, ordered)
+            save()
             out = build_html(session, payload)
-            canvas.unbind_all("<MouseWheel>")
+            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                win.unbind_all(seq)
             win.destroy()
-            done(out)
+            done(out, session, payload)
 
-        primary(bar, "Export guide", export).pack(fill="x", ipady=8)
+        def close():
+            if dirty["on"]:
+                answer = messagebox.askyesnocancel(
+                    "scribeling", "Save your changes before closing?", parent=win)
+                if answer is None:
+                    return
+                if answer:
+                    save()
+            root.destroy()
+
+        def key_undo(e):
+            # Inside a text box Ctrl+Z undoes typing; everywhere else it undoes
+            # the last step edit.
+            if isinstance(win.focus_get(), (tk.Text, tk.Entry, ttk.Entry)):
+                return
+            undo()
+
+        win.protocol("WM_DELETE_WINDOW", close)
+        win.bind("<Control-z>", key_undo)
+        render()
+
+    def open_existing(parent):
+        chosen = filedialog.askdirectory(
+            parent=parent, title="Choose a recording folder",
+            initialdir=str(Path.home() / "Documents" / "scribeling"))
+        if not chosen:
+            return False
+        session = Path(chosen)
+        if not (session / "steps.json").is_file():
+            messagebox.showwarning("scribeling", "That folder has no steps.json. "
+                                   "Pick the folder for one recording, the one "
+                                   "with a shots folder inside.", parent=parent)
+            return False
+        payload = json.loads((session / "steps.json").read_text(encoding="utf-8"))
+        parent.destroy()
+        editor(session, payload)
+        return True
 
     # -- done --------------------------------------------------------------
 
-    def done(out: Path):
-        win = shell("Done", "460x240")
+    def done(out: Path, session: Path, payload: dict):
+        win = shell("Done", "520x240")
         win.protocol("WM_DELETE_WINDOW", root.destroy)
         tk.Label(win, text="EXPORTED", bg=BG, fg=ACCENT,
                  font=("Consolas", 9)).pack(pady=(36, 0))
         tk.Label(win, text=out.name, bg=BG, fg=FG,
                  font=("Segoe UI", 16, "bold")).pack(pady=(4, 2))
         tk.Label(win, text=str(out.parent), bg=BG, fg=MUTED, font=("Consolas", 8),
-                 wraplength=400).pack()
+                 wraplength=460).pack()
         bar = tk.Frame(win, bg=BG)
         bar.pack(pady=24)
         tk.Button(bar, text="Open guide", command=lambda: reveal(out), relief="flat",
                   bg=ACCENT, fg="white", font=("Segoe UI", 10, "bold"), bd=0,
                   cursor="hand2").pack(side="left", padx=4, ipadx=14, ipady=6)
+        secondary(bar, "Keep editing",
+                  lambda: (win.destroy(), editor(session, payload))).pack(
+                      side="left", padx=4, ipadx=10, ipady=6)
         secondary(bar, "Open folder",
                   lambda: reveal(out.parent)).pack(side="left", padx=4,
-                                                   ipadx=14, ipady=6)
+                                                   ipadx=10, ipady=6)
         secondary(bar, "Record another",
                   lambda: (win.destroy(), setup())).pack(side="left", padx=4,
                                                          ipadx=10, ipady=6)
 
-    setup()
+    if edit is not None:
+        editor(edit, json.loads((edit / "steps.json").read_text(encoding="utf-8")))
+    else:
+        setup()
     root.mainloop()
 
 
@@ -1416,6 +1816,13 @@ def cmd_rebuild(args):
     print(f"Rebuilt -> {out}")
 
 
+def cmd_edit(args):
+    session = Path(args.session)
+    if not (session / "steps.json").is_file():
+        sys.exit(f"No steps.json in {session}")
+    run_gui(edit=session)
+
+
 def cmd_gui(args):
     run_gui(Config(title=args.title or "", description=args.description or "",
                    author=args.author or "",
@@ -1449,6 +1856,10 @@ def main():
     g.add_argument("--author", default="")
     g.add_argument("--outdir", default="")
     g.set_defaults(func=cmd_gui)
+
+    e = sub.add_parser("edit", help="open a recording in the step editor")
+    e.add_argument("session")
+    e.set_defaults(func=cmd_edit)
 
     b = sub.add_parser("rebuild")
     b.add_argument("session")

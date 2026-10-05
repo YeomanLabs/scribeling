@@ -46,8 +46,20 @@ description, press **Start recording**.
 A small always-on-top HUD lists steps as you make them. Clicks on the HUD are
 ignored, so its own buttons never end up in your guide.
 
-Then the review screen: every caption is editable, every step has a tick box.
-Fix the ones that read oddly, untick the misclicks, **Export**.
+Then the step editor opens. For each step you can:
+
+- edit the **Step** caption, add a **Detail** line, and set a **Stage**
+- **Delete** it, or tick several and **Delete selected** to clear out misclicks
+- move it **↑ / ↓**
+- **Merge up** into the step above (captions join, the later screenshot wins)
+- swap the screenshot with **Image…**, or drop it with **No image**
+- add a blank **+ Step below** for a note or a step the recorder missed
+
+**Undo** (or Ctrl+Z outside a text box) reverses any of these, deletes
+included. **Save** writes `steps.json`; **Export guide** also builds the HTML.
+
+To change a guide later, choose **Edit an existing recording…** on the start
+screen, or run `Scribeling.exe edit "<session folder>"`.
 
 Output lands in `Documents\scribeling\<timestamp>\`:
 
@@ -58,7 +70,7 @@ Output lands in `Documents\scribeling\<timestamp>\`:
 └── guide.html    generated output, self-contained
 ```
 
-`steps.json` stays editable after the fact. Change captions, add a `detail`
+`steps.json` is also editable by hand. Change captions, add a `detail`
 sentence, group steps with `phase`, add a `prerequisites` list, set
 `"hidden": true` on anything you want gone, then:
 
@@ -81,8 +93,8 @@ attachment or a file share with no network access. It has:
   (`guide.html#step-7`).
 - **Click-to-zoom screenshots.** Click again to see the image at full size, and
   press Esc to close.
-- **A highlight box and a click ring** on each screenshot. The box shows which
-  control was clicked and the ring shows exactly where.
+- **A highlight box and a pointing hand** on each screenshot. The box shows which
+  control was clicked, and the hand (with a soft glow) shows exactly where.
 - **Light and dark themes.** The guide follows the reader's system setting, and
   the button in the corner overrides it.
 - **A byline** with the author, step count, how long the procedure took, and
