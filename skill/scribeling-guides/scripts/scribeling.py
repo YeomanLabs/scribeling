@@ -70,6 +70,7 @@ class Config:
     truecolor: bool = False
     mask_typed: bool = False
     capture_typing: bool = True
+    auto_navigate: bool = True
 
 
 @dataclass
@@ -84,6 +85,7 @@ class Step:
     note: str = ""
     ts: str = ""
     hidden: bool = False
+    url: str = ""
 
 
 # --------------------------------------------------------------------------
@@ -134,6 +136,9 @@ def caption_for(step: Step) -> str:
     if step.action == "uac":
         return "Approve the **User Account Control** prompt"
 
+    if step.action == "navigate":
+        return "Navigate to"
+
     if step.action == "note":
         return step.note or "Add your note here"
 
@@ -150,6 +155,96 @@ def caption_for(step: Step) -> str:
     if kind:
         return f"Click the **{name}** {kind}"
     return f"Click **{name}**"
+
+
+# --------------------------------------------------------------------------
+# browser addresses
+# --------------------------------------------------------------------------
+
+# Chromium browsers (Chrome, Edge, Brave, Opera, Vivaldi) and Firefox. Electron
+# apps share the Chromium class but have no address bar, so they fall out when
+# the search for one comes back empty.
+BROWSER_CLASSES = {"Chrome_WidgetWin_1", "MozillaWindowClass"}
+ADDRESS_BAR_NAMES = {"Address and search bar", "Search or enter address",
+                     "Search with Google or enter address",
+                     "Search or enter web address", "Address field"}
+SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
+HOSTLIKE = re.compile(r"^(localhost|[\w-]+(\.[\w-]+)+)(:\d+)?$")
+# Query parameters that carry sign-in state. A guide gets emailed around, so
+# these never make it into a link.
+SECRET_PARAM = re.compile(r"token|code|sig|secret|passw|key|session|auth|nonce|"
+                          r"state|saml|assertion", re.I)
+
+
+def looks_like_url(text: str) -> bool:
+    t = (text or "").strip()
+    if not t or any(c.isspace() for c in t):
+        return False
+    if SCHEME.match(t):
+        return True
+    return bool(HOSTLIKE.match(re.split(r"[/?#]", t, 1)[0]))
+
+
+def clean_url(text: str) -> str:
+    """Chromium hides the scheme in the address bar, so add it back, and drop
+    anything that looks like a credential. Returns "" for non-web schemes."""
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+    t = (text or "").strip()
+    if not SCHEME.match(t):
+        if not HOSTLIKE.match(re.split(r"[/?#]", t, 1)[0]):
+            return ""           # javascript:, mailto: and friends
+        t = "https://" + t
+    try:
+        parts = urlsplit(t)
+    except ValueError:
+        return ""
+    if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+        return ""
+    query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                       if not SECRET_PARAM.search(k)])
+    fragment = parts.fragment
+    if re.search(r"(access_token|id_token|refresh_token|code)=", fragment, re.I):
+        fragment = ""
+    return urlunsplit((parts.scheme.lower(), parts.netloc, parts.path, query,
+                       fragment))
+
+
+def url_host(url: str) -> str:
+    from urllib.parse import urlsplit
+    try:
+        return urlsplit(url).netloc.lower()
+    except ValueError:
+        return ""
+
+
+def window_class(hwnd) -> str:
+    try:
+        buf = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetClassNameW(hwnd, buf, 256)
+        return buf.value
+    except Exception:
+        return ""
+
+
+def find_address_bar(auto, hwnd):
+    """The browser's address bar as a UIA control, or None. Matched by name,
+    by Firefox's automation id, or failing both (a localised browser) by the
+    first edit box holding something address-shaped."""
+    try:
+        win = auto.ControlFromHandle(hwnd)
+
+        def match(c, depth):
+            if c.Name in ADDRESS_BAR_NAMES or c.AutomationId == "urlbar-input":
+                return True
+            try:
+                return looks_like_url(c.GetValuePattern().Value)
+            except Exception:
+                return False
+
+        bar = auto.EditControl(searchFromControl=win, searchDepth=14, Compare=match)
+        return bar if bar.Exists(1, 0.2) else None
+    except Exception:
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -517,6 +612,9 @@ class Recorder:
         self.last_time = 0.0
         self._mouse = None
         self._keys = None
+        self.browser_url = ""      # page in the foreground browser, kept fresh
+        self.address_bar = ""      # its address bar's name, to spot typing in it
+        self.last_nav_host = None
 
     # -- hooks -------------------------------------------------------------
 
@@ -529,6 +627,7 @@ class Recorder:
             info = self.probe.at_point(x, y, area)
             if self.is_repeat(info, (x, y)):
                 return
+            self.maybe_navigate(window=info.get("window", ""))
             self.add("click", img, offset, info, (x, y), "")
         except Exception as exc:
             self.on_event("error", f"skipped a click: {exc}")
@@ -596,7 +695,7 @@ class Recorder:
 
     # -- steps -------------------------------------------------------------
 
-    def add(self, action, img, offset, info, point, note):
+    def add(self, action, img, offset, info, point, note, url=""):
         with self.lock:
             self.counter += 1
             idx = self.counter
@@ -609,6 +708,7 @@ class Recorder:
             image=f"step-{idx:03d}.png",
             note=note,
             ts=datetime.now().isoformat(timespec="seconds"),
+            url=url,
         )
         step.caption = caption_for(step)
         if note == "\x00password":
@@ -629,6 +729,19 @@ class Recorder:
         self.typed.clear()
         info = self.typing_target or {}
         self.typing_target = None
+        if (suffix and self.cfg.auto_navigate and self.address_bar
+                and info.get("type") == "Edit"
+                and info.get("name") == self.address_bar
+                and looks_like_url(text) and clean_url(text)):
+            # An address typed and entered is a navigation, not data entry.
+            # The click that put the cursor in the bar goes too - "Navigate to"
+            # already implies it.
+            last = self.steps[-1] if self.steps else None
+            if last and last.action == "click" and last.target == self.address_bar:
+                self.drop_last()
+            self.last_nav_host = None
+            self.maybe_navigate(clean_url(text), info.get("window", ""))
+            return
         try:
             # Screenshot now, so the field shows its finished value, but
             # highlight the element bound at the first keystroke.
@@ -645,6 +758,20 @@ class Recorder:
         if suffix:
             step.caption += suffix
             self.on_event("amend", step)
+
+    def maybe_navigate(self, url=None, window=""):
+        """Write a "Navigate to" step when the browser has moved to a different
+        site since the last one. Clicks within a site describe themselves, so
+        only a change of host earns a step."""
+        url = url or self.browser_url
+        if not url or not self.cfg.auto_navigate:
+            return None
+        host = url_host(url)
+        if not host or host == self.last_nav_host:
+            return None
+        self.last_nav_host = host
+        return self.add("navigate", None, (0, 0), {"window": window}, None, "",
+                        url=url)
 
     def add_note(self):
         try:
@@ -687,6 +814,43 @@ class Recorder:
                 self.last_sig = None
             was_secure = now_secure
 
+    def watch_browser(self):
+        """Keep browser_url current for whichever browser window is in front.
+        Polled here rather than read in the click handler, because finding an
+        address bar can take a few hundred milliseconds the first time and a
+        slow mouse hook makes the whole desktop stutter."""
+        try:
+            import uiautomation as auto
+            init = auto.UIAutomationInitializerInThread()
+        except Exception:
+            return
+        bars: dict = {}
+        with init:
+            while not self.stop.is_set():
+                time.sleep(0.3)
+                if self.paused or not self.cfg.auto_navigate:
+                    continue
+                hwnd = None
+                try:
+                    hwnd = ctypes.windll.user32.GetForegroundWindow()
+                    if window_class(hwnd) not in BROWSER_CLASSES:
+                        self.browser_url = ""
+                        continue
+                    bar, when = bars.get(hwnd, (None, 0.0))
+                    if bar is None and time.time() - when > 5:
+                        bar = find_address_bar(auto, hwnd)
+                        bars[hwnd] = (bar, time.time())
+                    if bar is None:
+                        self.browser_url = ""
+                        continue
+                    if bar.HasKeyboardFocus:
+                        continue        # mid-typing; the value is not a page yet
+                    value = bar.GetValuePattern().Value
+                    self.browser_url = clean_url(value) if looks_like_url(value) else ""
+                    self.address_bar = bar.Name
+                except Exception:
+                    bars.pop(hwnd, None)
+
     def worker(self):
         while not (self.stop.is_set() and self.jobs.empty()):
             try:
@@ -707,6 +871,7 @@ class Recorder:
         from pynput import mouse, keyboard
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self.watch_uac, daemon=True).start()
+        threading.Thread(target=self.watch_browser, daemon=True).start()
         self._mouse = mouse.Listener(on_click=self.on_click)
         self._keys = keyboard.Listener(on_press=self.on_press)
         self._mouse.start()
@@ -1150,7 +1315,7 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
     # -- setup -------------------------------------------------------------
 
     def setup():
-        win = shell("scribeling", "540x790")
+        win = shell("scribeling", "540x820")
         win.protocol("WM_DELETE_WINDOW", root.destroy)
 
         tk.Label(win, text="NEW RECORDING", bg=BG, fg=ACCENT,
@@ -1206,13 +1371,15 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
             desc.insert("1.0", prefill.description)
 
         typing = tk.BooleanVar(value=True)
+        navigate = tk.BooleanVar(value=True)
         mask = tk.BooleanVar(value=False)
         dim = tk.BooleanVar(value=False)
         box = tk.Frame(win, bg=BG)
         box.pack(fill="x", padx=26)
         for var, text in ((typing, "Record what I type"),
                           (mask, "Record that I typed, not the values"),
-                          (dim, "Dim everything except the target")):
+                          (dim, "Dim everything except the target"),
+                          (navigate, "Add a Navigate step when I go to a new website")):
             tk.Checkbutton(box, text=text, variable=var, bg=BG, fg=FG, bd=0,
                            activebackground=BG, highlightthickness=0,
                            font=("Segoe UI", 10), anchor="w").pack(fill="x")
@@ -1238,6 +1405,7 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
                          description=desc.get("1.0", "end").strip(),
                          author=author_var.get().strip(),
                          outdir=Path(outdir.get()), dim=dim.get(),
+                         auto_navigate=navigate.get(),
                          mask_typed=mask.get(), capture_typing=typing.get())
             session = cfg.outdir / datetime.now().strftime("%Y-%m-%d_%H%M%S")
             session.mkdir(parents=True, exist_ok=True)
@@ -1281,7 +1449,8 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
         rec = Recorder(cfg, session, on_event=lambda k, p: events.put((k, p)))
 
         def line(step):
-            return f" {step.index:>3}  {strip_marks(step.caption)}"
+            text = strip_marks(step.caption)
+            return f" {step.index:>3}  {text} {step.url}".rstrip()
 
         def finish():
             win.destroy()
@@ -1441,8 +1610,10 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
             payload["title"] = title_var.get().strip() or "Untitled procedure"
             payload["description"] = desc_var.get().strip()
             payload["author"] = author_var.get().strip()
-            for s, cap, det, stage, _ in rows:
+            for s, cap, det, stage, _, link in rows:
                 s["caption"] = cap.get("1.0", "end-1c").strip()
+                if link is not None:
+                    s["url"] = link.get().strip()
                 for key, value in (("detail", det.get("1.0", "end-1c").strip()),
                                    ("phase", stage.get().strip())):
                     if value:
@@ -1797,14 +1968,22 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
                 stage.bind("<KeyRelease>", lambda e: touch())
                 stage.bind("<<ComboboxSelected>>", lambda e: touch())
 
+                link = None
+                if s.get("action") == "navigate" or s.get("url"):
+                    labelled(body, "Link", 3)
+                    link = tk.StringVar(value=s.get("url", ""))
+                    tk.Entry(body, textvariable=link, font=("Consolas", 10),
+                             relief="solid", bd=1).grid(row=3, column=1,
+                                                        sticky="ew", pady=2,
+                                                        ipady=2)
+                    link.trace_add("write", lambda *_: touch())
+
                 where = "   ".join(x for x in (s.get("window", ""), s.get("target", ""))
                                    if x)
-                if s.get("url"):
-                    where = (where + "   " if where else "") + s["url"]
                 if where:
                     tk.Label(body, text=where, bg=CARD, fg="#4a6fa5",
                              font=("Consolas", 9), anchor="w").grid(
-                                 row=3, column=1, sticky="w", pady=(6, 0))
+                                 row=4, column=1, sticky="w", pady=(6, 0))
 
                 path = session / "shots" / s.get("image", "")
                 if s.get("image") and path.is_file():
@@ -1813,12 +1992,12 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
                         lbl = tk.Label(body, image=ph, bg=CARD, cursor="hand2",
                                        highlightbackground="#e2e5eb",
                                        highlightthickness=1)
-                        lbl.grid(row=4, column=1, sticky="w", pady=(8, 0))
+                        lbl.grid(row=5, column=1, sticky="w", pady=(8, 0))
                         lbl.bind("<Button-1>", lambda e, s=s: edit_image(s))
                     except Exception:
                         pass
 
-                rows.append((s, cap, det, stage, pick))
+                rows.append((s, cap, det, stage, pick, link))
 
             if not vis:
                 tk.Label(inner, text="No steps left. Undo brings deleted ones back.",
@@ -1929,13 +2108,15 @@ def cmd_record(args):
                  author=args.author if args.author is not None else display_name(),
                  outdir=Path(args.outdir), pad=args.pad, full_frames=args.full,
                  dim=args.dim, truecolor=args.truecolor,
-                 mask_typed=args.mask_typed, capture_typing=not args.no_typing)
+                 mask_typed=args.mask_typed, capture_typing=not args.no_typing,
+                 auto_navigate=not args.no_navigate)
     session = cfg.outdir / datetime.now().strftime("%Y-%m-%d_%H%M%S")
     session.mkdir(parents=True, exist_ok=True)
 
     def show(kind, payload):
         if kind == "step":
-            print(f"  {payload.index:>3}. {strip_marks(payload.caption)}")
+            print(f"  {payload.index:>3}. {strip_marks(payload.caption)} "
+                  f"{payload.url}".rstrip())
         elif kind == "error":
             print(f"  ! {payload}")
 
@@ -1993,6 +2174,8 @@ def main():
     r.add_argument("--truecolor", action="store_true")
     r.add_argument("--mask-typed", action="store_true")
     r.add_argument("--no-typing", action="store_true")
+    r.add_argument("--no-navigate", action="store_true",
+                   help="do not add Navigate steps from the browser address bar")
     r.set_defaults(func=cmd_record)
 
     g = sub.add_parser("gui", help="open the GUI with fields prefilled")

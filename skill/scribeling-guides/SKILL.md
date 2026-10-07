@@ -115,9 +115,12 @@ use. In short: keep `index` and `image` untouched, rewrite `caption`, add `phase
 to group steps into recognisable stages, add `detail` for a clarifying sentence,
 add a `prerequisites` list at the top level, set `"hidden": true` rather than
 deleting anything. Set top-level `author` and `tags` (product names, e.g.
-`["Microsoft", "Intune"]`) if the user gave them. When the procedure starts in a
-browser, insert a first step with `"action": "navigate"` and the page's `url`;
-it renders as a clickable link, and needs no screenshot.
+`["Microsoft", "Intune"]`) if the user gave them. The recorder adds
+`"action": "navigate"` steps with a `url` itself whenever the browser moves to a
+new site; give them a caption that names the page ("Open the **Intune admin
+center**") and drop any that are just sign-in redirects. If a browser procedure
+has no navigate step at the start, add one; it renders as a clickable link and
+needs no screenshot.
 
 **4. Re-render:**
 

@@ -38,7 +38,10 @@ tracks the reader's position as they scroll. Aim for two to five; a sidebar with
 one entry is not shown, and one with twelve is a table of contents nobody reads.
 
 Use `url` on a step to give the reader a link to click instead of an address to
-copy. A procedure that starts in a portal should open with one:
+copy. The recorder writes navigate steps itself when the browser changes site;
+rewrite their captions and hide the ones that only bounced through a sign-in
+page. A procedure that starts in a portal should open with one; add it if the
+recording does not:
 
 ```json
 {"index": 0, "action": "navigate", "phase": "Find the device",
