@@ -1388,7 +1388,8 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
                       side="right", padx=6, ipadx=8, ipady=3)
         tk.Label(win, text="Captions take **bold** and `code`. Stage groups steps "
                            "into sections; a step with no stage stays in the one "
-                           "above it. Deleted steps can be brought back with Undo.",
+                           "above it. Click a screenshot to redact or crop it. "
+                           "Deleted steps can be brought back with Undo.",
                  bg=BG, fg=MUTED, font=("Segoe UI", 9), wraplength=940,
                  justify="left").pack(anchor="w", padx=24, pady=(0, 8))
 
@@ -1540,24 +1541,168 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
                 messagebox.showerror("scribeling", f"Could not use that image:\n{exc}",
                                      parent=win)
                 return
-            change(lambda: s.update(image=name))
+            change(lambda: (s.update(image=name), s.pop("original_image", None)))
 
         def remove_image(s):
             change(lambda: s.update(image=""))
 
-        def preview(path: Path):
+        def edit_image(s):
+            """Redact, blur or crop a screenshot. Edits are written to a new
+            file and the step points at it, so the original stays on disk for
+            Reset and the step-level Undo still works. Only the current file is
+            embedded in guide.html, so redacted pixels never reach the guide."""
+            from PIL import ImageDraw, ImageFilter
+
+            shots = session / "shots"
+            current = s.get("image", "")
+            original = s.get("original_image") or current
+            history_ = [Image.open(shots / current).convert("RGB")]
+            mode = tk.StringVar(value="redact")
+            drag = {"start": None, "rect": None}
+            view = {"scale": 1.0, "photo": None}
+
             top = tk.Toplevel(win)
-            top.title(path.name)
-            top.configure(bg="#111317")
-            im = Image.open(path)
-            im.thumbnail((int(win.winfo_screenwidth() * .85),
-                          int(win.winfo_screenheight() * .8)))
-            ph = ImageTk.PhotoImage(im)
-            lbl = tk.Label(top, image=ph, bg="#111317", cursor="hand2")
-            lbl.image = ph
-            lbl.pack(padx=10, pady=10)
-            lbl.bind("<Button-1>", lambda e: top.destroy())
-            top.bind("<Escape>", lambda e: top.destroy())
+            top.title("Edit screenshot")
+            top.configure(bg=BG)
+            top.transient(win)
+            top.grab_set()
+
+            bar = tk.Frame(top, bg=BG)
+            bar.pack(fill="x", padx=16, pady=(14, 8))
+            for value, text in (("redact", "■ Redact"), ("blur", "▒ Blur"),
+                                ("crop", "✂ Crop")):
+                tk.Radiobutton(bar, text=text, value=value, variable=mode,
+                               indicatoron=False, relief="flat", bd=0, bg=SOFT,
+                               fg=FG, selectcolor=ACCENT, activebackground="#e2e5eb",
+                               font=("Segoe UI", 10, "bold"), cursor="hand2",
+                               command=lambda: paint_mode()).pack(
+                                   side="left", padx=(0, 6), ipadx=12, ipady=4)
+            hint = tk.Label(bar, bg=BG, fg=MUTED, font=("Segoe UI", 9))
+            hint.pack(side="left", padx=10)
+
+            foot = tk.Frame(top, bg=BG)
+            foot.pack(side="bottom", fill="x", padx=16, pady=12)
+            undo_img = secondary(foot, "Undo", lambda: step_back())
+            undo_img.pack(side="left", ipadx=10, ipady=4)
+            if original and original != current and (shots / original).is_file():
+                secondary(foot, "Reset to original", lambda: reset()).pack(
+                    side="left", padx=6, ipadx=10, ipady=4)
+            primary(foot, "Save", lambda: finish(True)).pack(side="right",
+                                                             ipadx=18, ipady=5)
+            secondary(foot, "Cancel", lambda: finish(False)).pack(
+                side="right", padx=8, ipadx=12, ipady=4)
+
+            canvas_ = tk.Canvas(top, bg="#111317", highlightthickness=0,
+                                cursor="crosshair")
+            canvas_.pack(padx=16)
+
+            def paint_mode():
+                hint.config(text={
+                    "redact": "Drag over anything to hide with a solid box.",
+                    "blur": "Drag over anything to pixelate it.",
+                    "crop": "Drag the area to keep.",
+                }[mode.get()])
+                for w in bar.winfo_children():
+                    if isinstance(w, tk.Radiobutton):
+                        on = w.cget("value") == mode.get()
+                        w.config(fg="white" if on else FG)
+
+            def show():
+                img = history_[-1]
+                maxw = int(top.winfo_screenwidth() * .82)
+                maxh = int(top.winfo_screenheight() * .70)
+                scale = min(maxw / img.width, maxh / img.height, 1.0)
+                w, h = max(1, int(img.width * scale)), max(1, int(img.height * scale))
+                view["scale"] = scale
+                view["photo"] = ImageTk.PhotoImage(img.resize((w, h), Image.LANCZOS))
+                canvas_.config(width=w, height=h)
+                canvas_.delete("all")
+                canvas_.create_image(0, 0, image=view["photo"], anchor="nw")
+                undo_img.config(state="normal" if len(history_) > 1 else "disabled")
+
+            def press(e):
+                drag["start"] = (e.x, e.y)
+                color = "#ffd23f" if mode.get() == "crop" else ACCENT
+                drag["rect"] = canvas_.create_rectangle(e.x, e.y, e.x, e.y,
+                                                        outline=color, width=2,
+                                                        dash=(5, 3))
+
+            def motion(e):
+                if drag["rect"]:
+                    x0, y0 = drag["start"]
+                    canvas_.coords(drag["rect"], x0, y0, e.x, e.y)
+
+            def release(e):
+                if not drag["start"]:
+                    return
+                x0, y0 = drag["start"]
+                drag["start"] = None
+                canvas_.delete(drag["rect"])
+                drag["rect"] = None
+                img = history_[-1]
+                k = view["scale"]
+                box = (max(0, int(min(x0, e.x) / k)), max(0, int(min(y0, e.y) / k)),
+                       min(img.width, int(max(x0, e.x) / k)),
+                       min(img.height, int(max(y0, e.y) / k)))
+                if box[2] - box[0] < 4 or box[3] - box[1] < 4:
+                    return
+                new = img.copy()
+                if mode.get() == "redact":
+                    ImageDraw.Draw(new).rectangle(box, fill=(24, 24, 28))
+                elif mode.get() == "blur":
+                    # Pixelate rather than blur: a light Gaussian blur over text
+                    # can sometimes be read back, big blocks cannot.
+                    w, h = box[2] - box[0], box[3] - box[1]
+                    block = max(8, min(w, h) // 6)
+                    region = new.crop(box)
+                    region = region.resize((max(1, w // block), max(1, h // block)),
+                                           Image.BILINEAR)
+                    region = region.resize((w, h), Image.NEAREST)
+                    new.paste(region.filter(ImageFilter.GaussianBlur(1)), box[:2])
+                else:
+                    new = new.crop(box)
+                history_.append(new)
+                show()
+
+            def step_back():
+                if len(history_) > 1:
+                    history_.pop()
+                    show()
+
+            def reset():
+                history_.append(Image.open(shots / original).convert("RGB"))
+                show()
+
+            def finish(keep):
+                if keep and len(history_) > 1:
+                    n = 1
+                    stem = f"step-{s.get('index', 0):03d}-edit"
+                    while (shots / f"{stem}{n}.png").exists():
+                        n += 1
+                    name = f"{stem}{n}.png"
+                    out = history_[-1]
+                    if out.width > MAX_WIDTH:
+                        out = out.resize((MAX_WIDTH,
+                                          int(out.height * MAX_WIDTH / out.width)),
+                                         Image.LANCZOS)
+                    out.convert("P", palette=Image.ADAPTIVE, colors=256).save(
+                        shots / name, optimize=True)
+                    change(lambda: s.update(image=name, original_image=original))
+                elif not keep and len(history_) > 1:
+                    if not messagebox.askyesno("scribeling", "Discard your edits "
+                                               "to this screenshot?", parent=top):
+                        return
+                top.grab_release()
+                top.destroy()
+
+            canvas_.bind("<ButtonPress-1>", press)
+            canvas_.bind("<B1-Motion>", motion)
+            canvas_.bind("<ButtonRelease-1>", release)
+            top.bind("<Control-z>", lambda e: step_back())
+            top.bind("<Escape>", lambda e: finish(False))
+            top.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+            paint_mode()
+            show()
             top.focus_set()
 
         def thumb(path: Path):
@@ -1669,7 +1814,7 @@ def run_gui(prefill: Config | None = None, edit: Path | None = None):
                                        highlightbackground="#e2e5eb",
                                        highlightthickness=1)
                         lbl.grid(row=4, column=1, sticky="w", pady=(8, 0))
-                        lbl.bind("<Button-1>", lambda e, p=path: preview(p))
+                        lbl.bind("<Button-1>", lambda e, s=s: edit_image(s))
                     except Exception:
                         pass
 
