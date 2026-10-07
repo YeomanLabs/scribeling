@@ -136,6 +136,16 @@ The context line above a run of steps appears only when the window changes, so a
 guide that stays in one portal reads as one continuous list instead of repeating
 the same tab title thirty times. Browser names are stripped from window titles.
 
+In a browser (Chrome, Edge, Brave, Opera, Vivaldi or Firefox) the recorder
+watches the address bar and adds a **Navigate to** step, with a clickable link,
+before your first click on each new website. Typing an address and pressing
+Enter does the same, and the click into the address bar is dropped as
+redundant. Moving around within one site doesn't add steps, because the clicks
+already describe that. Parameters that carry sign-in state (`code`, `state`,
+`token`, `session`, and so on) are removed from links before they're saved.
+Untick **Add a Navigate step when I go to a new website** on the setup screen,
+or pass `--no-navigate`, to turn this off.
+
 Repeat clicks on one target inside 1.6 seconds collapse into a single step,
 fingerprinted by element name, control type and bounding box. When UI Automation
 returns nothing the fingerprint falls back to the click position, so blind clicks
