@@ -53,6 +53,9 @@ Then the step editor opens. For each step you can:
 - move it **↑ / ↓**
 - **Merge up** into the step above (captions join, the later screenshot wins)
 - swap the screenshot with **Image…**, or drop it with **No image**
+- click the screenshot to **Redact** (solid box), **Blur** (pixelate) or
+  **Crop** it. Edits are saved to a new file, so **Reset to original** can
+  undo them later; only the edited version goes into `guide.html`
 - add a blank **+ Step below** for a note or a step the recorder missed
 
 **Undo** (or Ctrl+Z outside a text box) reverses any of these, deletes
